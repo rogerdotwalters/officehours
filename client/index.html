@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Office Hours</title>
+  <meta name="description" content="A social deduction game set in an open-plan office. Finish your tasks and clock out before Management catches you away from your desk." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Deployment config (edit after build if the game server lives on another origin). -->
+  <script src="config.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+  <!-- ============ Menu ============ -->
+  <main id="screen-menu" class="screen screen--menu">
+    <div class="badge">
+      <div class="badge__clip" aria-hidden="true"></div>
+      <h1 class="title">Office<br />Hours</h1>
+      <p class="tagline">Finish your tasks. Clock out. Don't get caught away from your desk.</p>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="menu-name" maxlength="16" autocomplete="nickname" placeholder="e.g. Pam" />
+      </label>
+
+      <button id="menu-create" class="btn btn--primary">Create a room</button>
+
+      <div class="join-row">
+        <label class="field field--code">
+          <span>Room code</span>
+          <input id="menu-code" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABCDE" />
+        </label>
+        <button id="menu-join" class="btn">Join</button>
+      </div>
+      <p id="menu-error" class="form-error" role="alert"></p>
+    </div>
+  </main>
+
+  <!-- ============ Lobby ============ -->
+  <main id="screen-lobby" class="screen screen--lobby" hidden>
+    <section class="timecard" aria-labelledby="lobby-title">
+      <header class="timecard__head">
+        <div>
+          <h2 id="lobby-title">Time card</h2>
+          <p class="timecard__sub"><span id="lobby-count">0</span> of <span id="lobby-max">10</span> people here. Share the code to invite more.</p>
+        </div>
+        <button id="lobby-code" class="room-code" title="Copy room code">-----</button>
+      </header>
+      <ol id="lobby-roster" class="roster"></ol>
+      <footer class="timecard__foot">
+        <button id="lobby-ready" class="btn">Clock in</button>
+        <button id="lobby-start" class="btn btn--primary" hidden>Start the workday</button>
+        <button id="lobby-leave" class="btn btn--quiet">Leave</button>
+      </footer>
+      <p id="lobby-hint" class="lobby-hint"></p>
+    </section>
+
+    <section class="chat chat--lobby" aria-label="Lobby chat">
+      <ol class="chat__log" data-chat-log></ol>
+      <form class="chat__form" data-chat-form>
+        <input maxlength="140" placeholder="Say something to the team" aria-label="Chat message" />
+        <button class="btn btn--small">Send</button>
+      </form>
+    </section>
+
+    <section class="rules">
+      <h3>How the day works</h3>
+      <p>One of you is secretly <strong>Management</strong>. Everyone else is a worker with a to-do list.</p>
+      <p>Workers: finish your tasks around the office, then clock out at the time clock in the Lobby. If enough of the team clocks out, workers win.</p>
+      <p>Management: catch workers away from their desks and send them home. If too few workers can still clock out, Management wins.</p>
+      <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
+    </section>
+  </main>
+
+  <!-- ============ Game ============ -->
+  <main id="screen-game" class="screen screen--game" hidden>
+    <canvas id="game-canvas" aria-label="Office map"></canvas>
+
+    <details id="hud-tasks" class="sticky-note" open>
+      <summary>To do today <span id="hud-task-count"></span></summary>
+      <ul id="hud-task-list"></ul>
+    </details>
+
+    <div class="hud-top">
+      <div id="hud-room" class="hud-pill">Hallway</div>
+      <div id="hud-progress" class="hud-pill hud-pill--quiet"></div>
+    </div>
+
+    <div id="hud-role" class="role-tag"></div>
+    <canvas id="hud-minimap" class="minimap" width="200" height="140" aria-hidden="true"></canvas>
+
+    <div id="hud-status" class="status-banner" hidden></div>
+
+    <div class="hud-bottom">
+      <div id="hud-hint" class="hint" hidden></div>
+      <div id="hud-taskbar" class="taskbar" hidden><div class="taskbar__fill"></div><span></span></div>
+    </div>
+
+    <button id="hud-report" class="report-btn" hidden>Report <kbd>R</kbd><span class="report-btn__cd"></span></button>
+
+    <ol id="hud-feed" class="feed" aria-live="polite"></ol>
+
+    <!-- Touch controls (shown on touch devices) -->
+    <div id="touch-stick" class="touch-stick" hidden><div class="touch-stick__knob"></div></div>
+    <button id="touch-use" class="touch-use" hidden>Use</button>
+  </main>
+
+  <!-- ============ Overlays ============ -->
+  <div id="overlay-role" class="overlay" hidden>
+    <article class="memo">
+      <header class="memo__head">
+        <p><b>To:</b> <span id="role-to"></span></p>
+        <p><b>From:</b> Human Resources</p>
+        <p><b>Re:</b> Your role today</p>
+      </header>
+      <h2 id="role-title" class="memo__title"></h2>
+      <p id="role-body" class="memo__body"></p>
+    </article>
+  </div>
+
+  <div id="overlay-meeting" class="overlay overlay--meeting" hidden>
+    <section class="meeting" aria-labelledby="meeting-title">
+      <header class="meeting__head">
+        <h2 id="meeting-title">All-hands meeting</h2>
+        <p id="meeting-sub" class="meeting__sub"></p>
+        <div id="meeting-timer" class="meeting__timer">0:00</div>
+      </header>
+      <div class="meeting__body">
+        <div>
+          <ul id="meeting-cards" class="vote-cards"></ul>
+          <button id="meeting-skip" class="btn btn--quiet">Skip vote</button>
+          <p id="meeting-result" class="meeting__result" hidden></p>
+        </div>
+        <section class="chat chat--meeting" aria-label="Meeting chat">
+          <ol class="chat__log" data-chat-log></ol>
+          <form class="chat__form" data-chat-form>
+            <input maxlength="140" placeholder="Who was away from their desk?" aria-label="Chat message" />
+            <button class="btn btn--small">Send</button>
+          </form>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div id="overlay-over" class="overlay" hidden>
+    <article class="memo memo--over">
+      <h2 id="over-title" class="memo__title"></h2>
+      <p id="over-reason" class="memo__body"></p>
+      <p id="over-mgmt" class="memo__body"></p>
+      <button id="over-lobby" class="btn btn--primary">Back to the lobby</button>
+      <p id="over-wait" class="lobby-hint">Waiting for the host to reset the room.</p>
+    </article>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

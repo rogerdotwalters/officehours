@@ -1,0 +1,25 @@
+# Office Hours: one Worker serves the static client (Workers Static Assets)
+# plus the game API (/api/rooms) and WebSocket endpoint (/ws).
+name = "office-hours"
+main = "server/worker.js"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./dist"
+# Requests that don't match a file fall through to the Worker (API + /ws).
+not_found_handling = "none"
+
+# Each room is one Durable Object instance, addressed by its room code.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "GameRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]
+
+[vars]
+# Comma-separated origins allowed to call the API / open sockets from another
+# domain (only needed if you host the client separately on Cloudflare Pages).
+# Example: "https://office-hours.pages.dev"
+ALLOWED_ORIGINS = ""

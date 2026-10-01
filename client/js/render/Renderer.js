@@ -130,6 +130,7 @@ export class Renderer {
    */
   drawFog(game) {
     if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
+    if (game.room?.sandbox?.seeAll?.includes(game.selfId)) return; // SANDBOX: see-everyone toggle
     const ctx = this.ctx;
     const r = game.settings.sightRange;
     const { x, y } = game.local;

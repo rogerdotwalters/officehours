@@ -296,6 +296,14 @@ function frame() {
 requestAnimationFrame(frame);
 
 // ---------------------------------------------------------------------------
+// Test rooms and test tools. To remove: delete the client/js/dev/ folder and
+// every line tagged SANDBOX (see README, "Test rooms").
+// ---------------------------------------------------------------------------
+import('./dev/sandbox.js') // SANDBOX
+  .then((m) => m.install({ net, game, ui, enterRoom, leaveRoom })) // SANDBOX
+  .catch((err) => console.warn('Test tools unavailable', err)); // SANDBOX
+
+// ---------------------------------------------------------------------------
 // Boot: ?room=CODE in the URL pre-fills the join form, and rejoins automatically
 // after a refresh if we still hold a session token for that room.
 // ---------------------------------------------------------------------------

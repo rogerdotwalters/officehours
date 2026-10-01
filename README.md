@@ -57,6 +57,31 @@ If you prefer to host the static client on Pages:
 3. In `wrangler.toml` set `ALLOWED_ORIGINS` to your Pages origin (e.g. `"https://office-hours.pages.dev"`) and redeploy the Worker (`npm run deploy`). This enables CORS for room creation and lets the Worker accept WebSocket connections from that origin.
 4. Publish the client: `npm run deploy:pages` (uploads `dist/` to a Pages project called `office-hours`), or connect the repo in the Pages dashboard with build command `npm run build` and output directory `dist`.
 
+## Test rooms
+
+Test rooms let you try every feature without gathering a full game. On the menu, press **Open a test room**. Inside one, a striped **Test tools** tab on the left edge opens a drawer with:
+
+- **Invite someone:** the room code and an invite link (copy or share). Anyone with the link can join, even mid-match; they get a free desk and the tasks handed out so far.
+- **Your role:** pick Worker, Management or Snitch before starting, or switch live during the match. There's only ever one Management; whoever had it becomes a worker.
+- **Match:** start immediately (alone is fine, nobody needs to be ready), go back to the waiting room, or end the match with either side winning. Wins only happen when you ask, unless you switch **Real win rules** on.
+- **Workday:** hand out the next task now, hand out every task, finish your tasks, or jump to 4:50 PM.
+- **Management and meetings:** reset all cooldowns, start a desk check, call or end a meeting.
+- **Move me:** teleport to any room, your desk, the bell or the time clock; send yourself home or come back; **See everyone** ignores the sight range.
+- **Dummies:** add stand-in players (they wander unless you switch that off, and don't vote) and make one post in any chat, so you can test reports, desk checks and chats on a single device.
+- **Quick settings:** walking speed, sight range, report range and desk-check warning, adjustable mid-match.
+
+A caution-tape stripe along the top of the screen tells you you're in a test room. Normal rooms are unaffected: the server ignores test-tool commands outside test rooms.
+
+**Switching it off.** Set `ENABLE_SANDBOX = "false"` in `wrangler.toml` and redeploy. The menu button disappears and the server refuses to create test rooms. You may want this before a public launch.
+
+**Removing it completely.** Delete `server/dev/`, `client/js/dev/` and `tests/sandbox.test.mjs`, then delete every line tagged `SANDBOX`:
+
+```bash
+grep -rn SANDBOX server client shared wrangler.toml
+```
+
+Each tagged line is self-contained (a hook, a flag or an import), so deleting them leaves the normal game intact. Run `npm test` afterwards.
+
 ## Game rules
 
 **The waiting room.** Everyone joins a small lobby room they can walk around in. The folder panel has three tabs: People (who's here and ready), House rules (the settings) and Chat. The host adjusts the house rules with the minus and plus buttons; everyone else sees them update live.
@@ -137,7 +162,8 @@ office-hours/
 │       ├── render/Minimap.js
 │       └── ui/UI.js          DOM UI: lobby, task list, role reveal, meeting, win/lose
 ├── server/
-│   ├── worker.js             HTTP entry: POST /api/rooms, GET /ws?room=CODE, CORS/origin checks
+│   ├── worker.js             HTTP entry: POST /api/rooms, GET /api/config, GET /ws?room=CODE, CORS/origin checks
+│   ├── dev/Sandbox.js        Test rooms and test-tool commands (removable)
 │   ├── GameRoom.js           Durable Object: sockets, sessions, rate limiting, tick loop, cleanup
 │   ├── net/RateLimiter.js    Token buckets per message type + global flood control
 │   └── game/                 Pure game logic (no Cloudflare APIs, unit-testable in Node)
@@ -184,6 +210,7 @@ JSON messages of the form `{ "t": type, ...fields }`.
 | `chat` | `text, channel` | `all` (lobby, meetings, after the game), `crew` (water cooler), `team` (back office) |
 | `settings` | `settings` | Host only, lobby only; clamped by the server |
 | `deskcheck` | | Management only; cooldown checked |
+| `dev` | `cmd, ...` | Test tools; ignored outside test rooms |
 | `lobby` | | Host only, return to lobby after game over |
 | `ping` | `at` | Latency |
 

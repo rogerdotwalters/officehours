@@ -1,0 +1,99 @@
+/* Test tools (client/js/dev/sandbox.js). Delete with that folder. */
+
+/* Caution tape along the top edge marks a test room. */
+body.is-sandbox::before {
+  content: '';
+  position: fixed;
+  left: 0; right: 0; top: 0;
+  height: 6px;
+  background: repeating-linear-gradient(-45deg, #ffd23f 0 10px, #1d2742 10px 20px);
+  z-index: 30;
+  pointer-events: none;
+}
+
+.sbx-menu-btn { background: #ffd23f; }
+
+.sbx-tab {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  rotate: 180deg;
+  padding: 0.9rem 0.45rem;
+  border: 2px solid var(--ink);
+  border-left: none;
+  border-radius: 0 10px 10px 0;
+  background: repeating-linear-gradient(-45deg, #ffd23f 0 8px, #ffe27a 8px 16px);
+  font: 700 0.95rem/1 var(--display);
+  color: var(--ink);
+  cursor: pointer;
+  z-index: 17;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
+}
+
+.sbx {
+  position: fixed;
+  left: 0; top: 0; bottom: 0;
+  width: min(340px, 88vw);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--paper);
+  border-right: 8px solid #ffd23f;
+  box-shadow: 8px 0 30px rgb(0 0 0 / 0.4);
+  padding: calc(0.9rem + var(--safe-t)) 1rem calc(1rem + var(--safe-b)) calc(1rem + var(--safe-l));
+  z-index: 18;
+  font-size: 0.95rem;
+}
+.sbx-head { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: start; margin-bottom: 0.5rem; }
+.sbx-head h2 { font-size: 1.5rem; }
+.sbx-head p { margin: 0.2rem 0 0; color: var(--ink-soft); font-size: 0.85rem; }
+.sbx-close { width: 2.4rem; height: 2.4rem; border: 2px solid var(--ink); border-radius: 8px; background: #fff; font: 700 1.4rem/1 var(--display); cursor: pointer; }
+
+.sbx-section { padding: 0.75rem 0; border-top: 1px dashed #cfcab8; display: grid; gap: 0.5rem; }
+.sbx-section h3 { font-size: 1.05rem; }
+.sbx-note { margin: 0; color: var(--ink-soft); font-size: 0.82rem; }
+
+.sbx-buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.sbx-btn {
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.4rem 0.7rem;
+  font: 600 0.92rem/1.2 var(--display);
+  cursor: pointer;
+  box-shadow: 0 2px 0 var(--ink);
+  min-height: 2.5rem;
+}
+.sbx-btn:active { transform: translateY(2px); box-shadow: none; }
+.sbx-btn.is-primary { background: var(--go); color: #fff; }
+
+.sbx-seg { display: flex; flex-wrap: wrap; border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; }
+.sbx-seg button { flex: 1 0 auto; border: none; border-left: 2px solid var(--ink); background: #fff; padding: 0.5rem 0.3rem; font: 600 0.8rem/1.1 var(--display); white-space: nowrap; cursor: pointer; min-height: 2.6rem; }
+.sbx-seg button:first-child { border-left: none; }
+.sbx-seg button.is-on { background: var(--ink); color: #fff; }
+
+.sbx-toggle { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; align-items: start; cursor: pointer; font-weight: 700; }
+.sbx-toggle input { width: 1.25rem; height: 1.25rem; margin-top: 0.1rem; accent-color: var(--go); }
+.sbx-toggle small { display: block; font-weight: 400; color: var(--ink-soft); font-size: 0.8rem; }
+
+.sbx-invite { display: grid; gap: 0.45rem; }
+.sbx-code { font: 700 1.8rem/1 var(--display); letter-spacing: 0.18em; }
+.sbx-link, .sbx-select {
+  width: 100%;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  background: #fff;
+  font-size: 16px;
+}
+.sbx-link { font-size: 0.85rem; color: var(--ink-soft); }
+.sbx-row { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem; }
+.sbx-say { display: grid; gap: 0.35rem; }
+
+.sbx-setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.5rem; font-weight: 700; }
+.sbx-stepper { display: inline-flex; align-items: center; gap: 0.25rem; }
+.sbx-stepper output { min-width: 3.6rem; text-align: center; font: 600 1rem/1 var(--display); }
+.sbx-stepper button { width: 2.3rem; height: 2.3rem; border: 2px solid var(--ink); border-radius: 8px; background: #fff; font: 700 1.2rem/1 var(--display); cursor: pointer; }
+.sbx-stepper button:disabled { opacity: 0.35; }

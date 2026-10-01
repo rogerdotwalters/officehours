@@ -30,6 +30,7 @@ import { TaskSystem } from './TaskSystem.js';
 import { RoleSystem } from './RoleSystem.js';
 import { MeetingSystem, SKIP } from './MeetingSystem.js';
 import { randomId } from './random.js';
+import * as Sandbox from '../dev/Sandbox.js'; // SANDBOX
 
 const LOBBY_GRACE_MS = 10_000;
 const POST_MEETING_FREEZE_MS = 1500;
@@ -41,8 +42,9 @@ function cleanText(value, max) {
 }
 
 export class Game {
-  constructor({ code, send, broadcast }) {
+  constructor({ code, send, broadcast, sandbox = false }) {
     this.code = code;
+    this.sandbox = !!sandbox; // test room (server/dev/Sandbox.js); always false without it
     this.send = send;
     this.broadcast = broadcast;
 
@@ -97,7 +99,8 @@ export class Game {
       }
     }
 
-    if (this.phase !== PHASE.LOBBY) return { error: { code: 'in_progress', message: 'That game has already started.' } };
+    // (Test rooms allow joining mid-game; `sandbox` is always false without server/dev/.)
+    if (this.phase !== PHASE.LOBBY && !this.sandbox) return { error: { code: 'in_progress', message: 'That game has already started.' } };
     if (this.players.size >= MAX_PLAYERS) return { error: { code: 'full', message: `Room is full (${MAX_PLAYERS} players).` } };
 
     let name = cleanText(rawName, NAME_MAX) || `Worker ${this.players.size + 1}`;
@@ -111,6 +114,7 @@ export class Game {
     this.placeInLobby(player);
     this.players.set(player.id, player);
     if (!this.hostId) this.hostId = player.id;
+    if (this.sandbox && this.phase !== PHASE.LOBBY) Sandbox.seatNewcomer(this, player, now); // SANDBOX
     this.roomDirty = true;
     return { player, resumed: false };
   }
@@ -162,7 +166,7 @@ export class Game {
   }
 
   isEmpty() {
-    return ![...this.players.values()].some((p) => p.connected);
+    return ![...this.players.values()].some((p) => p.connected && !p.dummy);
   }
 
   /** Everything a (re)connecting client needs to render the current moment. */
@@ -206,8 +210,9 @@ export class Game {
     for (const other of [...this.players.values()]) if (!other.connected) this.players.delete(other.id);
 
     const everyone = [...this.players.values()];
-    if (everyone.length < MIN_PLAYERS) return this.toast(p, `Need at least ${MIN_PLAYERS} players.`);
-    const notReady = everyone.filter((o) => o.id !== this.hostId && !o.ready);
+    const minPlayers = this.sandbox ? 1 : MIN_PLAYERS; // test rooms can start solo
+    if (everyone.length < minPlayers) return this.toast(p, `Need at least ${minPlayers} players.`);
+    const notReady = this.sandbox ? [] : everyone.filter((o) => o.id !== this.hostId && !o.ready);
     if (notReady.length) return this.toast(p, `Waiting on: ${notReady.map((o) => o.name).join(', ')}`);
 
     this.match = { ...this.settings };
@@ -229,6 +234,7 @@ export class Game {
 
     for (const player of everyone) player.resetForMatch();
     this.roles.assign(everyone, this.match, this.day.startAt);
+    if (this.sandbox) Sandbox.applyPreferredRoles(this); // SANDBOX: chosen roles
     for (const player of everyone) {
       this.tasks.reset(player);
       this.tasks.issueNext(player); // first task of the day, shown during the role reveal
@@ -248,7 +254,12 @@ export class Game {
   handleReturnToLobby(p) {
     if (this.phase !== PHASE.ENDED) return;
     if (p.id !== this.hostId) return this.toast(p, 'Only the host can reset the room.');
+    this.resetToLobby();
+  }
+
+  resetToLobby() {
     for (const other of [...this.players.values()]) {
+      if (other.dummy) { other.resetForMatch(); continue; } // SANDBOX: test dummies stay
       if (!other.connected || !other.token) { this.players.delete(other.id); continue; }
       other.resetForMatch();
       other.ready = false;
@@ -469,7 +480,7 @@ export class Game {
       o.y = seat.y;
     });
 
-    this.meetings.start({ calledBy: caller.id, voterIds: active.filter((o) => o.connected).map((o) => o.id), now });
+    this.meetings.start({ calledBy: caller.id, voterIds: active.filter((o) => o.connected && !o.dummy).map((o) => o.id), now });
     this.broadcast(S2C.EVENT, { kind: 'meeting', playerId: caller.id, name: caller.name });
     this.broadcast(S2C.CHAT, { channel: 'all', backlog: [] });
     this.broadcastRoom();
@@ -582,6 +593,7 @@ export class Game {
   /** Returns true if the game ended. */
   checkWin(now) {
     if (this.phase !== PHASE.PLAYING && this.phase !== PHASE.MEETING) return false;
+    if (this.sandbox && !Sandbox.sandboxWinsEnabled(this)) return false; // SANDBOX: wins on request only
 
     const mgmt = [...this.players.values()].find((p) => p.isManagement);
     if (!mgmt || mgmt.status === STATUS.LEFT) return this.endGame('workers', 'Management left the building.', now);
@@ -636,6 +648,7 @@ export class Game {
 
     const dt = TICK_MS / 1000;
     const speed = this.rules.playerSpeed;
+    if (this.sandbox) Sandbox.sandboxTick(this, now); // SANDBOX: wandering dummies
 
     if (this.phase === PHASE.LOBBY) {
       for (const p of this.players.values()) {
@@ -716,7 +729,8 @@ export class Game {
    * players who are out of the office see everyone.
    */
   snapshotFor(viewer, positions) {
-    const limited = this.phase === PHASE.PLAYING && viewer.isActive;
+    let limited = this.phase === PHASE.PLAYING && viewer.isActive;
+    if (this.sandbox && Sandbox.sandboxSeesAll(this, viewer)) limited = false; // SANDBOX: see-everyone toggle
     const range = this.rules.sightRange;
     const p = [];
     for (const { pl, entry } of positions) {
@@ -750,8 +764,9 @@ export class Game {
       phase: this.phase,
       hostId: this.hostId,
       players: [...this.players.values()].map((p) => p.publicInfo()),
-      minPlayers: MIN_PLAYERS,
+      minPlayers: this.sandbox ? 1 : MIN_PLAYERS,
       maxPlayers: MAX_PLAYERS,
+      sandbox: this.sandbox ? Sandbox.sandboxRoomInfo(this) : null, // SANDBOX
       settings: this.rules,
       progress,
       day: this.dayState(),

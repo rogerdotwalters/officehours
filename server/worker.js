@@ -2,6 +2,8 @@
  * Worker entrypoint.
  *
  *   POST /api/rooms          -> { code }   mint a new room (Durable Object)
+ *                               body { sandbox: true } mints a test room (SANDBOX)
+ *   GET  /api/config         -> { sandbox } which optional features are on
  *   GET  /ws?room=CODE       -> WebSocket  forwarded to that room's Durable Object
  *   anything else            -> static client (served by Workers Static Assets
  *                               before this code runs; see wrangler.toml)
@@ -20,7 +22,7 @@ function corsHeaders(request, env) {
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const ok = allowed.includes('*') || allowed.includes(origin);
   return ok
-    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' }
+    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' }
     : {};
 }
 
@@ -42,17 +44,27 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const cors = corsHeaders(request, env);
+    // Optional features the client can ask about via /api/config.
+    const features = { sandbox: false };
+    features.sandbox = String(env.ENABLE_SANDBOX ?? 'false').toLowerCase() === 'true'; // SANDBOX: test rooms
 
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
       return new Response(null, { status: 204, headers: cors });
     }
 
+    if (url.pathname === '/api/config' && request.method === 'GET') {
+      return json(features, 200, cors);
+    }
+
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const sandbox = body?.sandbox === true && features.sandbox;
+      if (body?.sandbox === true && !sandbox) return json({ error: 'Test rooms are switched off on this server.' }, 403, cors);
       // Try a few codes in case of a (rare) collision with a live room.
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = randomCode(ROOM_CODE_LENGTH, ROOM_CODE_ALPHABET);
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-        const res = await stub.fetch('https://room/init', { method: 'POST', body: JSON.stringify({ code }) });
+        const res = await stub.fetch('https://room/init', { method: 'POST', body: JSON.stringify({ code, sandbox }) });
         if (res.ok) return json({ code }, 201, cors);
       }
       return json({ error: 'Could not allocate a room. Try again.' }, 503, cors);

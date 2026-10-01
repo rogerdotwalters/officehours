@@ -23,3 +23,8 @@ new_sqlite_classes = ["GameRoom"]
 # domain (only needed if you host the client separately on Cloudflare Pages).
 # Example: "https://office-hours.pages.dev"
 ALLOWED_ORIGINS = ""
+
+# Test rooms: an "Open a test room" button on the menu, with tools to pick your
+# role, spawn dummies, skip time and so on (server/dev/Sandbox.js). Only affects
+# rooms created as test rooms. Set to "false" to switch the feature off.
+ENABLE_SANDBOX = "true"

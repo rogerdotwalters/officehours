@@ -194,7 +194,7 @@ export class UI {
     const me = game.me;
     const isHost = game.isHost;
     const others = room.players.filter((p) => p.id !== room.hostId);
-    const waiting = others.filter((p) => !p.ready);
+    const waiting = room.sandbox ? [] : others.filter((p) => !p.ready); // no ready-up in test rooms
     const enough = room.players.length >= room.minPlayers;
 
     setHidden($('lobby-ready'), isHost);

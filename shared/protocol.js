@@ -19,6 +19,7 @@ export const C2S = Object.freeze({
   CHAT: 'chat',            // { text, channel?: 'all' | 'team' | 'crew' }
   SETTINGS: 'settings',    // { settings: {...partial} }  host only, lobby only
   DESK_CHECK: 'deskcheck', // {}  Management only
+  DEV: 'dev',              // { cmd, ... }  test rooms only (server/dev/Sandbox.js)  SANDBOX
   RETURN_TO_LOBBY: 'lobby',// {}  host only, after game over
   PING: 'ping',            // { at }
 });

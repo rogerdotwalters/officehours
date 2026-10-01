@@ -63,6 +63,7 @@ export class Player {
       connected: this.connected,
       status: this.status,
       deskId: this.deskId,
+      dummy: this.dummy || undefined, // SANDBOX: test dummy
     };
   }
 }

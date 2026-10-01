@@ -153,6 +153,7 @@ export class GameRoom {
       case C2S.REPORT:          return g.handleReport(player, msg.targetId, now);
       case C2S.VOTE:            return g.handleVote(player, msg.targetId, now);
       case C2S.CHAT:            return g.handleChat(player, msg.text, now);
+      case C2S.TERMINAL:        return g.handleTerminal(player, msg.open, now);
       case C2S.RETURN_TO_LOBBY: return g.handleReturnToLobby(player);
       case C2S.PING:            return this.sendTo(player.id, encode(S2C.PONG, { at: Number(msg.at) || 0 }));
       default:                  return; // unknown types are ignored

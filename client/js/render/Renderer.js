@@ -5,7 +5,8 @@
  */
 import { drawFloors, drawWalls, drawRoomLabels, drawDecor, drawInteractable, roundRect } from './officeArt.js';
 import { PFLAG } from '../../shared/protocol.js';
-import { COLORS, DESK_RANGE, PLAYER_RADIUS } from '../../shared/constants.js';
+import { COLORS, DESK_RANGE, PLAYER_RADIUS, VISION_RADIUS } from '../../shared/constants.js';
+import { visibilityPolygon } from '../../shared/vision.js';
 
 const SKIN = ['#f3cfae', '#e0ac85', '#c68b62', '#9a6545', '#6f4630'];
 const HAIR = ['#2b1d14', '#5a3a1f', '#9b6b2f', '#d9b25b', '#1a1a1a', '#7b2f1d'];
@@ -89,8 +90,14 @@ export class Renderer {
     drawRoomLabels(ctx, map);
     drawDecor(ctx, map);
     this.drawOwnDeskZone(game, now);
-    for (const o of map.interactables) drawInteractable(ctx, o);
+    const objectState = { wifiDown: game.wifiDown, now };
+    for (const o of map.interactables) drawInteractable(ctx, o, objectState);
     this.drawDeskNameplates(game);
+
+    // Fog of war: everything outside your line of sight is dimmed. You still
+    // remember the floor plan, and the server never sends you hidden colleagues.
+    if (game.fogged) this.drawFog(game.map, game.local);
+
     drawWalls(ctx, map);
     this.drawTaskHighlights(game, now, frame.usable);
 
@@ -99,6 +106,43 @@ export class Renderer {
     const reportable = new Map(game.reportableTargets().map((t) => [t.id, t]));
     for (const p of positions) this.drawPlayer(game, p, now, reportable.get(p.id));
 
+    ctx.restore();
+  }
+
+  /** Darken the screen, then cut the visibility polygon out with a soft edge. */
+  drawFog(map, eye) {
+    const { canvas, ctx } = this;
+    if (!this.fog) this.fog = document.createElement('canvas');
+    const fog = this.fog;
+    if (fog.width !== canvas.width || fog.height !== canvas.height) {
+      fog.width = canvas.width;
+      fog.height = canvas.height;
+    }
+    const f = fog.getContext('2d');
+    f.setTransform(1, 0, 0, 1, 0, 0);
+    f.globalCompositeOperation = 'source-over';
+    f.clearRect(0, 0, fog.width, fog.height);
+    f.fillStyle = 'rgba(14, 19, 30, 0.84)';
+    f.fillRect(0, 0, fog.width, fog.height);
+
+    // Same world transform as the main canvas.
+    const k = this.dpr * this.scale;
+    f.setTransform(k, 0, 0, k, this.dpr * (this.w / 2 - this.cam.x * this.scale), this.dpr * (this.h / 2 - this.cam.y * this.scale));
+    f.globalCompositeOperation = 'destination-out';
+    const poly = visibilityPolygon(map, eye.x, eye.y, VISION_RADIUS);
+    const glow = f.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, VISION_RADIUS);
+    glow.addColorStop(0, 'rgba(0,0,0,1)');
+    glow.addColorStop(0.72, 'rgba(0,0,0,1)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    f.fillStyle = glow;
+    f.beginPath();
+    poly.forEach(([x, y], i) => (i ? f.lineTo(x, y) : f.moveTo(x, y)));
+    f.closePath();
+    f.fill();
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(fog, 0, 0);
     ctx.restore();
   }
 

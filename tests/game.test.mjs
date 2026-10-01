@@ -5,10 +5,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../server/game/Game.js';
-import { PHASE, STATUS, START_FREEZE_MS, REPORT_INITIAL_COOLDOWN_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS } from '../shared/constants.js';
+import {
+  PHASE, STATUS, START_FREEZE_MS, REPORT_INITIAL_COOLDOWN_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS,
+  BREAKER_INITIAL_COOLDOWN_MS, BREAKER_HOLD_MS, WIFI_OUTAGE_MS,
+} from '../shared/constants.js';
 import { S2C } from '../shared/protocol.js';
 import { buildOfficeMap, distPointRect } from '../shared/mapBuilder.js';
 import { positionBlocked } from '../shared/physics.js';
+import { hasLineOfSight, canSee, visibilityPolygon } from '../shared/vision.js';
 
 function makeGame() {
   const outbox = [];
@@ -234,4 +238,166 @@ test('map: every desk, prop and meeting seat is reachable on foot', () => {
   }
   for (const d of map.desks) assert.ok(reachable((x, y) => Math.hypot(x - d.seat.x, y - d.seat.y) < 12), `seat ${d.id}`);
   for (const s of map.meetingSeats) assert.ok(reachable((x, y) => Math.hypot(x - s.x, y - s.y) < 12), 'meeting seat');
+});
+
+// ---------------------------------------------------------------------------
+// Line of sight, breaker box / wifi, social meter, desk terminal
+// ---------------------------------------------------------------------------
+
+const lastSnapFor = (outbox, id) => [...outbox].reverse().find((m) => m.to === id && m.t === S2C.SNAPSHOT)?.d.p.map((e) => e[0]);
+
+/** Stand next to the breaker and hold it until it flips. Returns the new time. */
+function flipBreaker(game, p, now) {
+  const b = game.map.getInteractable('breaker');
+  p.x = b.x + b.w / 2; p.y = b.y - 22;
+  game.handleInteract(p, 'breaker', now);
+  assert.ok(p.activeTask, 'breaker hold started');
+  now += BREAKER_HOLD_MS + 10;
+  game.tick(now);
+  return now;
+}
+
+test('vision: walls block sight, open floor and doorways do not', () => {
+  const map = buildOfficeMap();
+  // Open Office A and the Conference Room are separated by walls.
+  assert.equal(hasLineOfSight(map, 300, 200, 900, 200), false);
+  // Same room, nothing in between but desks.
+  assert.equal(hasLineOfSight(map, 100, 200, 500, 200), true);
+  // Straight through Open Office A's south door into the hallway.
+  assert.equal(hasLineOfSight(map, 320, 300, 320, 560), true);
+  // Around the corner: deep inside Open Office A vs. the hallway off to the side.
+  assert.equal(hasLineOfSight(map, 60, 300, 620, 560), false);
+  // Too far, even with a clear view down the hallway.
+  assert.equal(canSee(map, { x: 40, y: 540 }, { x: 1900, y: 540 }), false);
+  assert.ok(visibilityPolygon(map, 320, 540).length > 50);
+});
+
+test('vision: snapshots only include colleagues you can see', () => {
+  const { game, outbox, workers, mgmt } = startedGame(4);
+  const [a, b] = workers;
+  const now = 1_000_000 + START_FREEZE_MS + 10;
+  a.x = 300; a.y = 200;       // Open Office A
+  b.x = 1000; b.y = 380;      // Conference Room
+  mgmt.x = 320; mgmt.y = 540; // hallway outside Open Office A's door
+  game.tick(now);
+  const seenByA = lastSnapFor(outbox, a.id);
+  assert.ok(seenByA.includes(a.id), 'always see yourself');
+  assert.ok(!seenByA.includes(b.id), 'not through the wall');
+  assert.ok(seenByA.includes(mgmt.id), 'through the open door');
+
+  // Spectators (clocked out / sent home) see everyone.
+  workers[2].status = STATUS.HOME;
+  game.tick(now + TICK_MS);
+  const seenBySpectator = lastSnapFor(outbox, workers[2].id);
+  assert.ok(seenBySpectator.includes(b.id) && seenBySpectator.includes(a.id));
+});
+
+test('reports need line of sight', () => {
+  const { game, outbox, mgmt, workers } = startedGame();
+  const w = workers[0];
+  const now = 1_000_000 + REPORT_INITIAL_COOLDOWN_MS + 10;
+  // Close, but on the other side of Open Office A's south wall.
+  w.x = 600; w.y = 420; mgmt.x = 600; mgmt.y = 500;
+  game.handleReport(mgmt, w.id, now);
+  assert.equal(w.status, STATUS.ACTIVE);
+  assert.match(lastToast(outbox, mgmt.id), /can't see/);
+});
+
+test('breaker: cooldown at start, outage blocks reports, then the wifi comes back', () => {
+  const { game, outbox, mgmt, workers } = startedGame();
+  let now = 1_000_000 + START_FREEZE_MS + 10;
+  const w = workers[0];
+  const b = game.map.getInteractable('breaker');
+
+  w.x = b.x + b.w / 2; w.y = b.y - 22;
+  game.handleInteract(w, 'breaker', now);
+  assert.equal(w.activeTask, null);
+  assert.match(lastToast(outbox, w.id), /won't budge/);
+
+  now = 1_000_000 + Math.max(BREAKER_INITIAL_COOLDOWN_MS, REPORT_INITIAL_COOLDOWN_MS) + 10;
+  now = flipBreaker(game, w, now);
+  assert.equal(game.wifi.down, true);
+  assert.equal(game.roomState().wifi.down, true);
+
+  // Caught in the hallway, but there's no wifi to file the report.
+  w.x = 300; w.y = 540; mgmt.x = 340; mgmt.y = 540;
+  game.handleReport(mgmt, w.id, now);
+  assert.equal(w.status, STATUS.ACTIVE);
+  assert.match(lastToast(outbox, mgmt.id), /wifi/i);
+
+  game.tick(now + WIFI_OUTAGE_MS + 10);
+  assert.equal(game.wifi.down, false);
+  game.handleReport(mgmt, w.id, now + WIFI_OUTAGE_MS + 20);
+  assert.equal(w.status, STATUS.SENT_HOME);
+});
+
+test('breaker: anyone can switch the power back on early', () => {
+  const { game, mgmt, workers } = startedGame();
+  let now = 1_000_000 + BREAKER_INITIAL_COOLDOWN_MS + 10;
+  now = flipBreaker(game, workers[0], now);
+  assert.equal(game.wifi.down, true);
+  now = flipBreaker(game, mgmt, now);
+  assert.equal(game.wifi.down, false);
+});
+
+test('social meter: outage tasks by workers fill it, and a full meter wins', () => {
+  const { game, workers, mgmt } = startedGame(3); // 2 workers -> goal 3
+  let now = 1_000_000 + BREAKER_INITIAL_COOLDOWN_MS + 10;
+  now = flipBreaker(game, workers[0], now);
+  assert.equal(game.workdayProgress().socialGoal, 3);
+
+  const finish = (p, id, desk = false) => game.taskFinished(p, { id, label: id, desk }, now);
+  finish(workers[0], 'emails', true); // desk task: not social
+  finish(mgmt, 'coffee');             // Management's cover story: doesn't count
+  assert.equal(game.social, 0);
+  finish(workers[0], 'coffee');
+  finish(workers[1], 'water');
+  assert.equal(game.social, 2);
+  assert.equal(game.phase, PHASE.PLAYING);
+  finish(workers[1], 'lunch');
+  assert.equal(game.phase, PHASE.ENDED);
+  assert.equal(game.result.winner, 'workers');
+});
+
+test('social meter: tasks with the wifi up do not count', () => {
+  const { game, workers } = startedGame();
+  game.taskFinished(workers[0], { id: 'coffee', label: 'coffee' }, 1_000_000);
+  assert.equal(game.social, 0);
+});
+
+test('terminal: only at your own desk with wifi; messages reach open terminals', () => {
+  const { game, outbox, workers } = startedGame(4);
+  const [a, b, c] = workers;
+  let now = 1_000_000 + START_FREEZE_MS + 10;
+  for (const p of [a, b, c]) Object.assign(p, game.roles.seatOf(p));
+
+  // Chat while playing is terminal-only.
+  game.handleChat(a, 'hello?', now);
+  assert.equal(game.terminalLog.length, 0);
+
+  c.x = 1000; c.y = 540; // away from desk
+  game.handleTerminal(c, true, now);
+  assert.equal(c.terminalOpen, false);
+  assert.match(lastToast(outbox, c.id), /desk/);
+
+  game.handleTerminal(a, true, now);
+  game.handleTerminal(b, true, now);
+  assert.ok(a.terminalOpen && b.terminalOpen);
+  game.handleChat(a, 'I saw Red near the printer', now);
+  const liveTo = (p) => outbox.filter((m) => m.to === p.id && m.t === S2C.TERMINAL && m.d.line).length;
+  assert.equal(liveTo(b), 1);
+  assert.equal(liveTo(c), 0, 'closed terminals get nothing live');
+
+  // Walking away closes it.
+  b.x = 1000; b.y = 540;
+  game.tick(now += TICK_MS);
+  assert.equal(b.terminalOpen, false);
+
+  // The wifi going down knocks every terminal offline.
+  now = 1_000_000 + BREAKER_INITIAL_COOLDOWN_MS + 10;
+  flipBreaker(game, c, now);
+  assert.equal(a.terminalOpen, false);
+  game.handleTerminal(a, true, now);
+  assert.equal(a.terminalOpen, false);
+  assert.match(lastToast(outbox, a.id), /wifi/i);
 });

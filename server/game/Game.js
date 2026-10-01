@@ -11,10 +11,13 @@ import {
   PHASE, STATUS, ROLE, MAX_PLAYERS, MIN_PLAYERS, NAME_MAX, CHAT_MAX, CHAT_HISTORY,
   START_FREEZE_MS, MEETING_COOLDOWN_MS, EMERGENCY_CALLS_PER_PLAYER, GO_HOME_RATIO,
   RECONNECT_GRACE_MS, TICK_MS, INTERACT_RANGE, COLORS,
+  WIFI_OUTAGE_MS, BREAKER_COOLDOWN_MS, BREAKER_INITIAL_COOLDOWN_MS, SOCIAL_GOAL_PER_WORKER, SOCIAL_GOAL_MIN,
 } from '../../shared/constants.js';
 import { S2C, PFLAG } from '../../shared/protocol.js';
 import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { stepMovement } from '../../shared/physics.js';
+import { canSee } from '../../shared/vision.js';
+import { TIMED_BY_ID } from '../../shared/tasks.js';
 import { Player } from './Player.js';
 import { TaskSystem } from './TaskSystem.js';
 import { RoleSystem } from './RoleSystem.js';
@@ -43,7 +46,11 @@ export class Game {
     this.players = new Map();   // id -> Player (insertion order = join order)
     this.phase = PHASE.LOBBY;
     this.hostId = null;
-    this.chat = [];
+    this.chat = [];             // lobby / meeting / post-game chat
+    this.terminalLog = [];      // desk terminal chat room (in-game)
+    this.wifi = { down: false, until: 0, readyAt: 0 };
+    this.social = 0;            // tasks finished during wifi outages
+    this.clock = 0;             // latest server time seen, for countdowns in roomState()
     this.freezeUntil = 0;
     this.meetingAvailableAt = 0;
     this.result = null;
@@ -122,11 +129,15 @@ export class Game {
 
   /** Everything a (re)connecting client needs to render the current moment. */
   sendFullState(p, now) {
+    this.clock = now;
     this.send(p.id, S2C.ROOM, this.roomState());
     this.send(p.id, S2C.CHAT, { backlog: this.chat });
     if (this.phase !== PHASE.LOBBY) {
       this.send(p.id, S2C.SELF, this.selfState(p, now));
-      this.send(p.id, S2C.SNAPSHOT, this.snapshot());
+      this.send(p.id, S2C.SNAPSHOT, this.snapshotFor(p));
+      // A reconnecting client starts with its terminal closed.
+      p.terminalOpen = false;
+      this.send(p.id, S2C.TERMINAL, { open: false });
     }
     if (this.meetings.active) this.send(p.id, S2C.MEETING, this.meetings.serialize(now));
     if (this.phase === PHASE.ENDED && this.result) this.send(p.id, S2C.GAME_OVER, this.result);
@@ -169,11 +180,15 @@ export class Game {
     this.meetingAvailableAt = now + MEETING_COOLDOWN_MS;
     this.result = null;
     this.chat = [];
+    this.terminalLog = [];
+    this.wifi = { down: false, until: 0, readyAt: now + BREAKER_INITIAL_COOLDOWN_MS };
+    this.social = 0;
+    this.clock = now;
 
     this.broadcast(S2C.GAME_START, { freezeMs: START_FREEZE_MS });
     this.broadcastRoom();
     for (const player of everyone) this.sendSelf(player, now);
-    this.broadcast(S2C.SNAPSHOT, this.snapshot());
+    this.sendSnapshots();
   }
 
   handleReturnToLobby(p) {
@@ -216,6 +231,7 @@ export class Game {
     switch (object.type) {
       case 'meeting_bell': return this.callMeeting(p, now);
       case 'time_clock':   return this.clockOut(p, now);
+      case 'breaker':      return this.useBreaker(p, object, now);
       default: {
         this.tasks.cancel(p);
         const res = this.tasks.start(p, object, now);
@@ -244,7 +260,7 @@ export class Game {
   handleReport(p, targetId, now) {
     if (!this.canAct(p, now)) return;
     const target = typeof targetId === 'string' ? this.players.get(targetId) : null;
-    const check = this.roles.validateReport(p, target, now);
+    const check = this.roles.validateReport(p, target, now, { wifiDown: this.wifi.down });
     if (!check.ok) return this.toast(p, check.reason);
 
     this.roles.consumeReport(p, now);
@@ -260,6 +276,83 @@ export class Game {
     this.toast(p, `${target.name} was sent home.`);
     this.roomDirty = true;
     this.checkWin(now);
+  }
+
+  // ===========================================================================
+  // Breaker box & wifi
+  // ===========================================================================
+
+  /** Anyone can cut the power (if the breaker isn't on cooldown) or restore it. */
+  useBreaker(p, object, now) {
+    this.tasks.cancel(p);
+    if (this.wifi.down) return this.tasks.startTimed(p, object, TIMED_BY_ID.get('breaker_on'), now);
+    if (now < this.wifi.readyAt) {
+      return this.toast(p, `The breaker won't budge yet (${Math.ceil((this.wifi.readyAt - now) / 1000)}s).`);
+    }
+    this.tasks.startTimed(p, object, TIMED_BY_ID.get('breaker_off'), now);
+  }
+
+  /** A timed action (not a to-do item) finished. */
+  finishAction(p, action, now) {
+    if (action.id === 'breaker_off') {
+      if (this.wifi.down || now < this.wifi.readyAt) return;
+      this.wifi.down = true;
+      this.wifi.until = now + WIFI_OUTAGE_MS;
+      // Anonymous: only people who saw it happen know who flipped it.
+      this.broadcast(S2C.EVENT, { kind: 'wifi_down', ms: WIFI_OUTAGE_MS });
+      for (const o of this.players.values()) this.closeTerminal(o, 'wifi');
+      this.roomDirty = true;
+    } else if (action.id === 'breaker_on') {
+      if (this.wifi.down) this.restoreWifi(now, 'breaker');
+    }
+  }
+
+  restoreWifi(now, why) {
+    this.wifi.down = false;
+    this.wifi.until = 0;
+    this.wifi.readyAt = now + BREAKER_COOLDOWN_MS;
+    // Anyone mid-way through flipping the breaker has nothing left to flip.
+    for (const o of this.players.values()) {
+      if (o.activeTask?.taskId === 'breaker_on') this.tasks.cancel(o);
+    }
+    if (why) this.broadcast(S2C.EVENT, { kind: 'wifi_up', why });
+    this.roomDirty = true;
+  }
+
+  // ===========================================================================
+  // Desk terminal (the only way to talk while the workday is running)
+  // ===========================================================================
+
+  /** Why this player can't use their terminal right now, or null if they can. */
+  terminalBlocked(p) {
+    if (this.phase !== PHASE.PLAYING || !p.isActive) return 'Your terminal is off.';
+    if (!this.roles.isAtDesk(p)) return 'Sit at your own desk to use your terminal.';
+    if (this.wifi.down) return 'No wifi. Your terminal is offline.';
+    return null;
+  }
+
+  handleTerminal(p, open, now) {
+    if (!open) return this.closeTerminal(p);
+    const blocked = this.terminalBlocked(p);
+    if (blocked) return this.toast(p, blocked);
+    p.terminalOpen = true;
+    this.send(p.id, S2C.TERMINAL, { open: true, backlog: this.terminalLog });
+  }
+
+  closeTerminal(p, reason) {
+    if (!p.terminalOpen) return;
+    p.terminalOpen = false;
+    this.send(p.id, S2C.TERMINAL, { open: false, reason });
+  }
+
+  terminalSay(p, text, now) {
+    const blocked = this.terminalBlocked(p);
+    if (blocked || !p.terminalOpen) return this.toast(p, blocked ?? 'Open your terminal at your desk to chat.');
+    const line = { from: p.id, text, at: now };
+    this.terminalLog.push(line);
+    if (this.terminalLog.length > CHAT_HISTORY) this.terminalLog.shift();
+    // Only open terminals get it live; everyone else reads it in the backlog when they sit down.
+    for (const o of this.players.values()) if (o.terminalOpen) this.send(o.id, S2C.TERMINAL, { open: true, line });
   }
 
   // ===========================================================================
@@ -279,6 +372,9 @@ export class Game {
   startMeeting(caller, now) {
     this.phase = PHASE.MEETING;
     this.chat = [];
+    for (const o of this.players.values()) this.closeTerminal(o, 'meeting');
+    // Facilities resets the breaker while everyone is in the conference room.
+    if (this.wifi.down) this.restoreWifi(now, null);
 
     const active = [...this.players.values()].filter((o) => o.isActive);
     active.forEach((o, i) => {
@@ -293,7 +389,7 @@ export class Game {
     this.broadcast(S2C.EVENT, { kind: 'meeting', playerId: caller.id, name: caller.name });
     this.broadcast(S2C.CHAT, { backlog: [] });
     this.broadcastRoom();
-    this.broadcast(S2C.SNAPSHOT, this.snapshot());
+    this.sendSnapshots();
     this.broadcast(S2C.MEETING, this.meetings.serialize(now));
   }
 
@@ -336,7 +432,7 @@ export class Game {
     this.meetingAvailableAt = now + MEETING_COOLDOWN_MS;
     this.broadcast(S2C.MEETING, { stage: 'closed' });
     this.broadcastRoom();
-    this.broadcast(S2C.SNAPSHOT, this.snapshot());
+    this.sendSnapshots();
   }
 
   // ===========================================================================
@@ -346,6 +442,7 @@ export class Game {
   handleChat(p, rawText, now) {
     const text = cleanText(rawText, CHAT_MAX);
     if (!text) return;
+    if (this.phase === PHASE.PLAYING) return this.terminalSay(p, text, now);
 
     const inMeeting = this.phase === PHASE.MEETING && this.meetings.current?.stage === 'discussing';
     const open = this.phase === PHASE.LOBBY || this.phase === PHASE.ENDED || inMeeting;
@@ -367,7 +464,8 @@ export class Game {
     const goal = Math.max(1, Math.ceil(workers.length * GO_HOME_RATIO));
     const home = workers.filter((p) => p.status === STATUS.HOME).length;
     const inOffice = workers.filter((p) => p.status === STATUS.ACTIVE).length;
-    return { goal, home, inOffice };
+    const socialGoal = Math.max(SOCIAL_GOAL_MIN, Math.ceil(workers.length * SOCIAL_GOAL_PER_WORKER));
+    return { goal, home, inOffice, social: this.social, socialGoal };
   }
 
   /** Returns true if the game ended. */
@@ -380,8 +478,9 @@ export class Game {
     if (this.phase === PHASE.MEETING) return false;
     if (mgmt.status === STATUS.SENT_HOME) return this.endGame('workers', `${mgmt.name} was Management — and got voted out.`, mgmt, now);
 
-    const { goal, home, inOffice } = this.workdayProgress();
+    const { goal, home, inOffice, social, socialGoal } = this.workdayProgress();
     if (home >= goal) return this.endGame('workers', 'Enough of the team clocked out. The workday is done.', mgmt, now);
+    if (social >= socialGoal) return this.endGame('workers', 'The social meter is full. The team bonded during the outages.', mgmt, now);
     if (home + inOffice < goal) return this.endGame('management', 'Too few workers are left to finish the workday.', mgmt, now);
     return false;
   }
@@ -392,6 +491,7 @@ export class Game {
     for (const p of this.players.values()) {
       p.input = { dx: 0, dy: 0 };
       this.tasks.cancel(p);
+      this.closeTerminal(p);
     }
     this.result = { winner, reason, managementId: mgmt?.id ?? null, managementName: mgmt?.name ?? null };
     this.broadcast(S2C.GAME_OVER, this.result);
@@ -404,12 +504,15 @@ export class Game {
   // ===========================================================================
 
   tick(now) {
+    this.clock = now;
     // Disconnect grace periods
     for (const p of [...this.players.values()]) {
       if (p.connected || !p.token) continue;
       const grace = this.phase === PHASE.LOBBY ? LOBBY_GRACE_MS : RECONNECT_GRACE_MS;
       if (now - p.disconnectedAt > grace) this.expire(p, now);
     }
+
+    if (this.phase === PHASE.PLAYING && this.wifi.down && now >= this.wifi.until) this.restoreWifi(now, 'timeout');
 
     if (this.phase === PHASE.PLAYING) {
       const dt = TICK_MS / 1000;
@@ -421,13 +524,13 @@ export class Game {
           p.x = next.x;
           p.y = next.y;
         }
+        if (p.terminalOpen && this.terminalBlocked(p)) this.closeTerminal(p, 'left_desk');
         const finished = this.tasks.update(p, now);
-        if (finished) {
-          const left = p.tasks.filter((t) => !t.done).length;
-          this.toast(p, left ? `Done: ${finished.label}.` : 'All tasks done! Clock out at the time clock in the Lobby.');
-        }
+        if (finished?.action) this.finishAction(p, finished, now);
+        else if (finished) this.taskFinished(p, finished, now);
+        if (this.phase !== PHASE.PLAYING) break; // that task ended the game
       }
-      this.broadcast(S2C.SNAPSHOT, this.snapshot());
+      if (this.phase === PHASE.PLAYING) this.sendSnapshots();
     }
 
     if (this.phase === PHASE.MEETING && this.meetings.current) {
@@ -446,20 +549,43 @@ export class Game {
     if (this.roomDirty) this.broadcastRoom();
   }
 
+  taskFinished(p, task, now) {
+    const left = p.tasks.filter((t) => !t.done).length;
+    this.toast(p, left ? `Done: ${task.label}.` : 'All tasks done! Clock out at the time clock in the Lobby.');
+    // Away-from-desk tasks done during an outage fill the shared social meter.
+    // Management's cover-story tasks never count.
+    if (this.wifi.down && !task.desk && p.role === ROLE.WORKER) {
+      this.social++;
+      this.roomDirty = true;
+      this.checkWin(now);
+    }
+  }
+
   // ===========================================================================
   // Serialisation
   // ===========================================================================
 
-  snapshot() {
+  /**
+   * Positions as seen by one player. While the workday is running, an active
+   * player only receives colleagues within their line of sight, so a modified
+   * client can't see around corners either. Spectators and meetings see everyone.
+   */
+  snapshotFor(viewer) {
+    const fog = this.phase === PHASE.PLAYING && viewer.isActive;
     const p = [];
     for (const pl of this.players.values()) {
       if (!pl.isActive) continue;
+      if (fog && pl !== viewer && !canSee(this.map, viewer, pl)) continue;
       let flags = 0;
       if (pl.activeTask) flags |= PFLAG.BUSY;
       if (this.roles.isAtDesk(pl)) flags |= PFLAG.AT_DESK;
       p.push([pl.id, Math.round(pl.x * 10) / 10, Math.round(pl.y * 10) / 10, flags]);
     }
     return { p };
+  }
+
+  sendSnapshots() {
+    for (const p of this.players.values()) if (p.connected) this.send(p.id, S2C.SNAPSHOT, this.snapshotFor(p));
   }
 
   roomState() {
@@ -472,6 +598,11 @@ export class Game {
       minPlayers: MIN_PLAYERS,
       maxPlayers: MAX_PLAYERS,
       progress,
+      wifi: this.phase === PHASE.LOBBY ? null : {
+        down: this.wifi.down,
+        msLeft: this.wifi.down ? Math.max(0, this.wifi.until - this.clock) : 0,
+        readyIn: Math.max(0, this.wifi.readyAt - this.clock),
+      },
     };
   }
 

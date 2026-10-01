@@ -5,7 +5,7 @@
  * the full duration. The client just shows a progress bar; the server owns the
  * timer, so a modified client cannot finish tasks instantly or remotely.
  */
-import { TASKS, TASKS_BY_ID } from '../../shared/tasks.js';
+import { TASKS, TASKS_BY_ID, TIMED_BY_ID } from '../../shared/tasks.js';
 import { TASKS_PER_WORKER, INTERACT_RANGE } from '../../shared/constants.js';
 import { distPointRect } from '../../shared/mapBuilder.js';
 import { shuffle } from './random.js';
@@ -57,9 +57,14 @@ export class TaskSystem {
     }
 
     const def = TASKS_BY_ID.get(entry.id);
+    this.startTimed(player, object, def, now);
+    return { ok: true, task: def };
+  }
+
+  /** Begin a timed hold for a task or an action (see ACTIONS in tasks.js). */
+  startTimed(player, object, def, now) {
     player.activeTask = { taskId: def.id, objectId: object.id, startedAt: now, duration: def.duration };
     player.selfDirty = true;
-    return { ok: true, task: def };
   }
 
   cancel(player) {
@@ -70,8 +75,9 @@ export class TaskSystem {
   }
 
   /**
-   * Advance a player's active task. Returns the finished task definition when it
-   * completes this tick, otherwise null. Walking out of range cancels it.
+   * Advance a player's active task. Returns the finished task (or action)
+   * definition when it completes this tick, otherwise null. Walking out of range
+   * cancels it.
    */
   update(player, now) {
     const active = player.activeTask;
@@ -88,7 +94,7 @@ export class TaskSystem {
     if (entry) entry.done = true;
     player.activeTask = null;
     player.selfDirty = true;
-    return TASKS_BY_ID.get(active.taskId);
+    return TIMED_BY_ID.get(active.taskId);
   }
 
   /** Private, per-player view of the task list. */

@@ -31,7 +31,8 @@ export class Player {
     this.activeTask = null;       // { taskId, objectId, startedAt, duration }
     this.reportReadyAt = 0;
     this.emergencyCallsLeft = 0;
-    this.selfDirty = true;        // private state changed -> resend SELF
+    this.terminalOpen = false;    // desk terminal chat: only open terminals receive messages
+    this.selfDirty = true;       // private state changed -> resend SELF
   }
 
   get isManagement() {

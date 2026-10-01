@@ -65,10 +65,18 @@ If you prefer to host the static client on Pages:
 
 **Management** gets a fake "cover story" to-do list so the screen looks the same as everyone else's, and a **Report** button. Management can report any worker who is within reporting range and **not at their own desk**. The reported worker is sent home (eliminated). Reports have a cooldown, so Management has to pick moments carefully. Being at your desk is always safe, and everyone can see whose desk is occupied.
 
+**Line of sight.** You only see colleagues who are in your line of sight and within view distance. Walls block vision (desks and furniture don't), so you can't see around corners or into a room until you're looking through its door. Everything outside your view is covered by fog. This is enforced on the server: you never receive the position of anyone you can't see. Management also needs a clear line of sight to report someone. Spectators (clocked out or sent home) see the whole floor.
+
+**Breaker box and wifi.** The breaker box sits at the dead end of the east hallway, next to the Mail & Copy Room. Anyone can hold the interaction for 3 s to cut the power, which kills the office wifi for 30 s. While the wifi is down, Management can't file reports, so everyone can leave their desk safely. Anyone can also hold the breaker again to restore the power early. That is Management's counter, at the risk of being seen doing it. Once the wifi is back, the breaker is stuck for 45 s, and also for the first 20 s of the day. Calling a meeting resets the breaker.
+
+**Social meter.** Every away-from-desk task a worker finishes while the wifi is down fills the team's shared social meter (desk tasks and Management's cover-story tasks don't count). The goal is 1.5 tasks per worker (minimum 3). A full meter wins the game for the workers.
+
+**Desk terminal.** Outside meetings, the only way to talk is the terminal on your own desk. Sit at your desk and press T (or the *Open terminal* button) to join the office chat room. The terminal needs wifi, closes when you get up, and only receives messages live while it's open; you get the recent backlog when you sit back down. Management has a desk and terminal too.
+
 **Emergency meetings.** Any active player can ring the bell on the conference table (once per game each, with a cooldown after the start and after every meeting). Everyone is pulled into the Conference Room to chat and vote. The player with the most votes is ejected and their role is revealed; a tie or a skip majority ejects nobody. Afterwards everyone is returned to their desks.
 
 **Winning.**
-- **Workers win** when at least half of the workers (rounded up) have clocked out, or when Management is voted out or leaves.
+- **Workers win** when at least half of the workers (rounded up) have clocked out, when the social meter fills up, or when Management is voted out or leaves.
 - **Management wins** when it becomes impossible for enough workers to clock out, i.e. too many have been sent home or ejected.
 
 ## Controls
@@ -79,6 +87,7 @@ If you prefer to host the static client on Pages:
 | Use / interact | E or Space, or click the object | *Use* button, or tap the object |
 | Stop a task | Esc or Q, or just walk away | Walk away |
 | Report (Management) | R, or the Report button | Report button |
+| Desk terminal (at your desk) | T, or the terminal button; Esc to close | Terminal button |
 
 The minimap in the corner shows you, your desk and where your remaining tasks are.
 
@@ -116,13 +125,14 @@ office-hours/
 │   ├── officeMap.js          The office as pure data
 │   ├── mapBuilder.js         Turns the data into walls, colliders, seats, lookups
 │   ├── physics.js            Deterministic movement + collision
-│   └── tasks.js              Task catalogue
+│   ├── tasks.js              Task catalogue (+ timed actions like the breaker)
+│   └── vision.js             Line of sight and the fog-of-war visibility polygon
 ├── scripts/build.mjs         client/ → dist/, shared/ → dist/shared/
 ├── tests/game.test.mjs
 └── wrangler.toml
 ```
 
-**Authority.** Clients only send intents: a movement direction, "interact with object X", "report player Y", a vote, a chat line. The server runs the simulation at 20 ticks per second using the same `shared/physics.js` and map the client uses, validates everything, and broadcasts results. Roles, task lists and cooldowns are sent only to the player they belong to; everyone else's snapshot carries just position and two public flags (busy, at desk).
+**Authority.** Clients only send intents: a movement direction, "interact with object X", "report player Y", a vote, a chat line. The server runs the simulation at 20 ticks per second using the same `shared/physics.js` and map the client uses, validates everything, and broadcasts results. Roles, task lists and cooldowns are sent only to the player they belong to. Snapshots are built per player and only include colleagues in that player's line of sight, each with just a position and two public flags (busy, at desk).
 
 **Smooth movement.** The local player is predicted immediately with the shared physics and gently corrected toward the server position. Remote players are rendered about 110 ms in the past and interpolated between snapshots.
 
@@ -142,16 +152,18 @@ JSON messages of the form `{ "t": type, ...fields }`.
 | `cancel` | | Stop the current task |
 | `report` | `targetId` | Management only; range, desk and cooldown checked |
 | `vote` | `targetId` or `"skip"` | During meetings |
-| `chat` | `text` | Lobby, meetings and after the game |
+| `chat` | `text` | Lobby, meetings and after the game; during play it goes to the desk terminal (must be open) |
+| `term` | `open` | Open/close your desk terminal. Server checks you're at your desk and the wifi is up |
 | `lobby` | | Host only, return to lobby after game over |
 | `ping` | `at` | Latency |
 
 | Server → client | Contents |
 | --- | --- |
 | `welcome` | Your player id, session token, room code |
-| `room` | Public roster and phase |
+| `room` | Public roster, phase, progress (clock-outs, social meter) and wifi state |
 | `start` | Game started, freeze duration |
-| `snap` | Positions and public flags for all players (20/s) |
+| `snap` | Positions and public flags for the players you can see (20/s) |
+| `term` | Desk terminal: `open`, `backlog` on open, new `line`s, or a close `reason` |
 | `self` | Private: role, desk, tasks, current task, cooldowns |
 | `event` | Feed items (someone was sent home, clocked out, meeting called) |
 | `meeting` | Meeting state; who has voted is public, the tally only at the end |
@@ -178,6 +190,6 @@ JSON messages of the form `{ "t": type, ...fields }`.
 
 The server picks it up automatically for task assignment and validation.
 
-**Tuning.** Player counts, speeds, ranges, cooldowns, meeting length and the clock-out ratio are all in `shared/constants.js`.
+**Tuning.** Player counts, speeds, ranges, vision distance, breaker/wifi timings, the social meter goal, cooldowns, meeting length and the clock-out ratio are all in `shared/constants.js`.
 
-**Ideas for later.** Limited vision / fog of war so Management can hide, WebSocket hibernation for idle rooms, sabotage events (printer jam, fire drill), sprite art, spectator mode for eliminated players, sound.
+**Ideas for later.** WebSocket hibernation for idle rooms, sabotage events (printer jam, fire drill), sprite art, spectator mode for eliminated players, sound.

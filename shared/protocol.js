@@ -16,7 +16,8 @@ export const C2S = Object.freeze({
   CANCEL: 'cancel',        // {}  stop current task
   REPORT: 'report',        // { targetId }  Management only
   VOTE: 'vote',            // { targetId }  a player id or 'skip'
-  CHAT: 'chat',            // { text }
+  CHAT: 'chat',            // { text }  lobby/meeting chat, or the desk terminal while playing
+  TERMINAL: 'term',        // { open: bool }  open/close your desk terminal
   RETURN_TO_LOBBY: 'lobby',// {}  host only, after game over
   PING: 'ping',            // { at }
 });
@@ -31,6 +32,7 @@ export const S2C = Object.freeze({
   EVENT: 'event',          // { kind, ... } feed items
   MEETING: 'meeting',      // meeting state (who voted is public, for whom is not until the end)
   CHAT: 'chat',            // { from, text, at }
+  TERMINAL: 'term',        // { open, backlog?, line?, reason? }  desk terminal chat room
   GAME_OVER: 'over',       // { winner, reason, managementId }
   TOAST: 'toast',          // { text }  private feedback ("Nothing to do here")
   PONG: 'pong',            // { at }

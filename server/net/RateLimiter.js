@@ -14,6 +14,7 @@ export const DEFAULT_LIMITS = {
   [C2S.REPORT]:          { capacity: 2,  refill: 0.2 },
   [C2S.VOTE]:            { capacity: 3,  refill: 0.5 },
   [C2S.CHAT]:            { capacity: 4,  refill: 0.5 },
+  [C2S.TERMINAL]:        { capacity: 4,  refill: 1 },
   [C2S.READY]:           { capacity: 4,  refill: 1 },
   [C2S.START]:           { capacity: 3,  refill: 0.5 },
   [C2S.RETURN_TO_LOBBY]: { capacity: 3,  refill: 0.5 },

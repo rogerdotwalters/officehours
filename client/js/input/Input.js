@@ -19,7 +19,7 @@ function isTyping() {
 export class Input {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{ onInteract, onReport, onCancel, onClick }} callbacks
+   * @param {{ onInteract, onReport, onCancel, onTerminal, onClick }} callbacks
    */
   constructor(canvas, callbacks) {
     this.canvas = canvas;
@@ -51,6 +51,7 @@ export class Input {
     if (e.repeat) return;
     if (e.code === 'KeyE' || e.code === 'Space') { e.preventDefault(); this.cb.onInteract?.(); }
     else if (e.code === 'KeyR') this.cb.onReport?.();
+    else if (e.code === 'KeyT') { e.preventDefault(); this.cb.onTerminal?.(); }
     else if (e.code === 'Escape' || e.code === 'KeyQ') this.cb.onCancel?.();
   }
 

@@ -6,7 +6,7 @@
  * innerHTML, so it can't inject markup.
  */
 import { COLORS, PHASE, STATUS } from '../../shared/constants.js';
-import { TASKS_BY_ID, TARGET_HINT } from '../../shared/tasks.js';
+import { TASKS_BY_ID, TIMED_BY_ID, TARGET_HINT } from '../../shared/tasks.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -66,6 +66,20 @@ export class UI {
         input.value = '';
       });
     }
+
+    // ---- Desk terminal ----
+    $('hud-terminal').addEventListener('click', () => this.h.onTerminal());
+    $('terminal-close').addEventListener('click', () => this.h.onTerminal(false));
+    $('terminal-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector('input');
+      const text = input.value.trim();
+      if (text) this.h.onChat(text);
+      input.value = '';
+    });
+    $('terminal-form').querySelector('input').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this.h.onTerminal(false); }
+    });
 
     // ---- HUD / overlays ----
     $('hud-report').addEventListener('click', () => this.h.onReport());
@@ -192,6 +206,21 @@ export class UI {
     const progress = room?.progress;
     setText($('hud-progress'), progress ? `Clocked out ${progress.home} of ${progress.goal} needed` : '');
 
+    // Social meter
+    const social = $('hud-social');
+    setHidden(social, !progress);
+    if (progress) {
+      const pct = Math.min(100, (progress.social / progress.socialGoal) * 100);
+      social.querySelector('.meter__fill').style.width = `${pct}%`;
+      setText(social.querySelector('.social-pill__count'), `${progress.social}/${progress.socialGoal}`);
+    }
+
+    // Wifi
+    const wifi = $('hud-wifi');
+    const wifiDown = game.wifiDown;
+    setText(wifi, !game.wifi ? '' : wifiDown ? `Wifi down ${formatClock(game.wifi.until - now)}` : 'Wifi on');
+    wifi.classList.toggle('is-down', wifiDown);
+
     // Status banner
     let banner = '';
     const freezeLeft = (self?.freezeUntil ?? 0) - now;
@@ -221,7 +250,7 @@ export class UI {
     // Task progress bar (extrapolated between server updates)
     const bar = $('hud-taskbar');
     if (self?.active && game.phase === PHASE.PLAYING) {
-      const def = TASKS_BY_ID.get(self.active.taskId);
+      const def = TIMED_BY_ID.get(self.active.taskId);
       const p = Math.min(1, self.active.progress + (now - self.receivedAt) / def.duration);
       bar.firstElementChild.style.width = `${(p * 100).toFixed(1)}%`;
       setText(bar.lastElementChild, `${def.label}. Move to cancel.`);
@@ -237,10 +266,44 @@ export class UI {
     if (showReport) {
       const cd = Math.max(0, (self.reportReadyAt ?? 0) - now);
       const target = game.reportableTargets().find((t) => t.inRange);
-      btn.disabled = cd > 0 || !target;
+      btn.disabled = wifiDown || cd > 0 || !target;
       setText(btn.querySelector('.report-btn__cd'),
-        cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody away from their desk nearby');
+        wifiDown ? 'wifi is down'
+          : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s`
+            : target ? game.nameOf(target.id) : 'nobody away from their desk in sight');
     }
+
+    // Desk terminal button
+    const termBtn = $('hud-terminal');
+    const showTerm = game.phase === PHASE.PLAYING && game.inOffice && game.atOwnDesk && !game.terminal.open;
+    setHidden(termBtn, !showTerm);
+    if (showTerm) {
+      termBtn.disabled = wifiDown;
+      setText(termBtn.lastElementChild, wifiDown ? 'Terminal offline (no wifi)' : 'Open terminal');
+    }
+  }
+
+  // ===========================================================================
+  // Desk terminal
+  // ===========================================================================
+  renderTerminal(game) {
+    const panel = $('terminal');
+    const wasHidden = panel.hidden;
+    setHidden(panel, !game.terminal.open);
+    if (!game.terminal.open) {
+      // Give the keyboard back to movement.
+      if (panel.contains(document.activeElement)) document.activeElement.blur();
+      return;
+    }
+    const lines = game.terminal.lines;
+    const log = $('terminal-log');
+    log.replaceChildren(
+      el('li', { class: 'sys' }, 'Connected. Messages here reach every open terminal in the office.'),
+      ...(lines.length ? [] : [el('li', { class: 'sys' }, 'No messages yet.')]),
+      ...lines.map((l) => el('li', {}, el('b', { style: `color:${game.colorOf(l.from)}` }, game.nameOf(l.from)), ': ', l.text)),
+    );
+    log.scrollTop = log.scrollHeight;
+    if (wasHidden && !this.isTouch) panel.querySelector('input').focus();
   }
 
   // ===========================================================================

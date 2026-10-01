@@ -49,6 +49,7 @@ const ui = new UI({
   onChat: (text) => net.send(C2S.CHAT, { text }),
   onVote: (targetId) => net.send(C2S.VOTE, { targetId }),
   onReport: () => report(),
+  onTerminal: (open) => toggleTerminal(open),
   onReturnToLobby: () => net.send(C2S.RETURN_TO_LOBBY),
   async onCopyCode() {
     const url = `${location.origin}${location.pathname}?room=${game.room?.code}`;
@@ -76,6 +77,7 @@ function enterRoom(code, name) {
 function leaveRoom(errorText = '') {
   net.leave();
   game.reset();
+  ui.renderTerminal(game);
   game.room = null;
   game.selfId = null;
   history.replaceState(null, '', location.pathname);
@@ -103,9 +105,23 @@ function report(targetId) {
   net.send(C2S.REPORT, { targetId: id });
 }
 
+/** Open/close the desk terminal. The server decides; this just pre-checks for a quick hint. */
+function toggleTerminal(open = !game.terminal.open) {
+  if (!open) {
+    game.terminal.open = false;
+    ui.renderTerminal(game);
+    return net.send(C2S.TERMINAL, { open: false });
+  }
+  if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
+  if (!game.atOwnDesk) return ui.toast('Your terminal is at your desk.', 1500);
+  if (game.wifiDown) return ui.toast('No wifi. Your terminal is offline.', 1500);
+  net.send(C2S.TERMINAL, { open: true });
+}
+
 const input = new Input(canvas, {
   onInteract: interact,
   onReport: () => report(),
+  onTerminal: () => toggleTerminal(),
   onCancel: () => net.send(C2S.CANCEL),
   onClick(sx, sy) {
     const w = renderer.screenToWorld(sx, sy);
@@ -128,9 +144,9 @@ net.on(S2C.WELCOME, (msg) => {
 
 net.on(S2C.ROOM, (room) => {
   const prev = game.phase;
-  game.applyRoom(room);
+  game.applyRoom(room, performance.now());
   if (room.phase === PHASE.LOBBY) {
-    if (prev !== PHASE.LOBBY) game.reset();
+    if (prev !== PHASE.LOBBY) { game.reset(); ui.renderTerminal(game); }
     ui.hideGameOver();
     show('lobby');
   } else if (screen !== 'game') {
@@ -142,6 +158,7 @@ net.on(S2C.ROOM, (room) => {
 
 net.on(S2C.GAME_START, () => {
   game.reset();
+  ui.renderTerminal(game);
   chatLines = [];
   awaitingRoleReveal = true;
   show('game');
@@ -168,6 +185,25 @@ net.on(S2C.CHAT, (msg) => {
   ui.renderChat(chatLines, game);
 });
 
+const TERMINAL_CLOSED = {
+  left_desk: 'You left your desk. Terminal closed.',
+  wifi: 'The wifi went down. Your terminal is offline.',
+};
+
+net.on(S2C.TERMINAL, (msg) => {
+  const t = game.terminal;
+  if (!msg.open) {
+    t.open = false;
+    if (TERMINAL_CLOSED[msg.reason]) ui.toast(TERMINAL_CLOSED[msg.reason], 2000);
+  } else {
+    t.open = true;
+    if (msg.backlog) t.lines = msg.backlog;
+    if (msg.line) t.lines.push(msg.line);
+    if (t.lines.length > 60) t.lines = t.lines.slice(-60);
+  }
+  ui.renderTerminal(game);
+});
+
 net.on(S2C.EVENT, (e) => {
   const you = e.playerId === game.selfId;
   const who = you ? 'You' : e.name;
@@ -177,6 +213,8 @@ net.on(S2C.EVENT, (e) => {
     case 'meeting': return ui.feed(`${who} called an all-hands meeting.`);
     case 'ejected': return ui.feed(`${who} ${you ? 'were' : 'was'} voted out.`, 'bad');
     case 'left': return ui.feed(`${e.name} left the building.`);
+    case 'wifi_down': return ui.feed(`Someone flipped the breaker. The wifi is down for ${Math.round(e.ms / 1000)}s, so nobody can be sent home. Go socialise!`, 'good');
+    case 'wifi_up': return ui.feed(e.why === 'breaker' ? 'Someone switched the power back on. Wifi is up.' : 'The wifi is back. Management is watching again.', 'bad');
   }
 });
 

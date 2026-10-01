@@ -74,6 +74,9 @@
       <p>Workers: finish your tasks around the office, then clock out at the time clock in the Lobby. If enough of the team clocks out, workers win.</p>
       <p>Management: catch workers away from their desks and send them home. If too few workers can still clock out, Management wins.</p>
       <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
+      <p>You can only see what's in your line of sight. Walls block your view, so watch the corners.</p>
+      <p>The breaker box at the end of the east hallway kills the wifi. With no wifi, Management can't send anyone home. Tasks finished during an outage fill the team's social meter, and a full meter wins the day for the workers.</p>
+      <p>During the workday the only way to talk is the terminal at your own desk, and it needs wifi.</p>
     </section>
   </main>
 
@@ -89,6 +92,10 @@
     <div class="hud-top">
       <div id="hud-room" class="hud-pill">Hallway</div>
       <div id="hud-progress" class="hud-pill hud-pill--quiet"></div>
+      <div id="hud-social" class="hud-pill hud-pill--quiet social-pill" hidden>
+        <span>Social</span><span class="meter"><span class="meter__fill"></span></span><span class="social-pill__count"></span>
+      </div>
+      <div id="hud-wifi" class="hud-pill wifi-pill"></div>
     </div>
 
     <div id="hud-role" class="role-tag"></div>
@@ -99,7 +106,21 @@
     <div class="hud-bottom">
       <div id="hud-hint" class="hint" hidden></div>
       <div id="hud-taskbar" class="taskbar" hidden><div class="taskbar__fill"></div><span></span></div>
+      <button id="hud-terminal" class="terminal-btn" hidden><kbd>T</kbd><span>Open terminal</span></button>
     </div>
+
+    <!-- Desk terminal: the only way to talk while the workday is running -->
+    <section id="terminal" class="terminal" aria-label="Desk terminal" hidden>
+      <header class="terminal__bar">
+        <span>OfficeNet Messenger · #general</span>
+        <button id="terminal-close" class="terminal__close" aria-label="Close terminal">×</button>
+      </header>
+      <ol id="terminal-log" class="terminal__log" aria-live="polite"></ol>
+      <form id="terminal-form" class="terminal__form">
+        <span aria-hidden="true">&gt;</span>
+        <input maxlength="140" autocomplete="off" spellcheck="false" placeholder="type a message, Esc to close" aria-label="Terminal message" />
+      </form>
+    </section>
 
     <button id="hud-report" class="report-btn" hidden>Report <kbd>R</kbd><span class="report-btn__cd"></span></button>
 

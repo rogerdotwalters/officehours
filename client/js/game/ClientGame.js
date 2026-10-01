@@ -10,9 +10,10 @@
  */
 import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { stepMovement } from '../../shared/physics.js';
-import { PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, REPORT_RANGE, COLORS } from '../../shared/constants.js';
+import { PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, REPORT_RANGE, COLORS, DESK_RANGE } from '../../shared/constants.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
+import { hasLineOfSight } from '../../shared/vision.js';
 
 const SNAP_DISTANCE = 150;   // further than this from the server = teleport, don't smooth
 const BUFFER_SIZE = 12;
@@ -29,12 +30,17 @@ export class ClientGame {
     this.serverSelf = null;    // last authoritative local position
     this.meeting = null;
     this.spectateIndex = 0;
+    this.wifi = null;          // { down, until, readyAt } in local performance.now() time
+    this.terminal = { open: false, lines: [] };
   }
 
   // ---- Applying server messages -------------------------------------------
-  applyRoom(room) {
+  applyRoom(room, now) {
     this.room = room;
     this.roster = new Map(room.players.map((p) => [p.id, p]));
+    this.wifi = room.wifi
+      ? { down: room.wifi.down, until: now + room.wifi.msLeft, readyAt: now + room.wifi.readyIn }
+      : null;
   }
 
   applySelf(self, now) {
@@ -78,6 +84,7 @@ export class ClientGame {
     this.serverSelf = null;
     this.self = null;
     this.meeting = null;
+    this.terminal = { open: false, lines: [] };
   }
 
   // ---- Derived state -------------------------------------------------------
@@ -86,6 +93,16 @@ export class ClientGame {
   get isHost() { return this.room?.hostId === this.selfId; }
   get isManagement() { return this.self?.role === ROLE.MANAGEMENT; }
   get inOffice() { return !!this.local && this.self?.status === STATUS.ACTIVE; }
+  get wifiDown() { return !!this.wifi?.down; }
+
+  /** Fog of war applies while you're walking the floor (not to spectators or meetings). */
+  get fogged() { return this.phase === PHASE.PLAYING && this.inOffice; }
+
+  /** Within DESK_RANGE of your own seat (display only; the server re-checks). */
+  get atOwnDesk() {
+    const desk = this.self?.deskId && this.map.desksById.get(this.self.deskId);
+    return !!(desk && this.local && Math.hypot(this.local.x - desk.seat.x, this.local.y - desk.seat.y) <= DESK_RANGE);
+  }
 
   nameOf(id) { return this.roster.get(id)?.name ?? 'Someone'; }
   colorOf(id) { return COLORS[this.roster.get(id)?.colorId ?? 9].hex; }
@@ -160,6 +177,11 @@ export class ClientGame {
   actionFor(o) {
     if (o.type === 'meeting_bell') return 'Call an all-hands meeting';
     if (o.type === 'time_clock') return this.isManagement ? null : 'Clock out and go home';
+    if (o.type === 'breaker') {
+      if (this.wifiDown) return 'Restore the power';
+      const wait = (this.wifi?.readyAt ?? 0) - performance.now();
+      return wait > 0 ? `Breaker is stuck (${Math.ceil(wait / 1000)}s)` : 'Cut the power and kill the wifi';
+    }
     const task = this.pendingTaskFor(o);
     return task ? task.label : null;
   }
@@ -180,12 +202,13 @@ export class ClientGame {
 
   /** Management only: players I could report right now. */
   reportableTargets() {
-    if (!this.isManagement || !this.local) return [];
+    if (!this.isManagement || !this.local || this.wifiDown) return [];
     const out = [];
     for (const [id, e] of this.entities) {
       if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
       const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
-      out.push({ id, d, inRange: d <= REPORT_RANGE });
+      const inRange = d <= REPORT_RANGE && hasLineOfSight(this.map, this.local.x, this.local.y, e.x, e.y);
+      out.push({ id, d, inRange });
     }
     return out.sort((a, b) => a.d - b.d);
   }

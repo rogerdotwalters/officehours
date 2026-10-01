@@ -76,6 +76,8 @@ export const OFFICE = {
     // Lobby
     { id: 'plant',       type: 'plant',          label: 'Lobby ficus',      x: 744,  y: 644,  w: 40,  h: 40,  solid: true },
     { id: 'time_clock',  type: 'time_clock',     label: 'Time clock',       x: 900,  y: 1336, w: 50,  h: 40,  solid: true },
+    // East hallway dead end: cutting the power kills the office wifi
+    { id: 'breaker',     type: 'breaker',        label: 'Breaker box',      x: 1310, y: 1352, w: 60,  h: 32,  solid: true },
     // Conference room — the emergency meeting bell sits on the table edge
     { id: 'bell',        type: 'meeting_bell',   label: 'All-hands bell',   x: 985,  y: 286,  w: 30,  h: 24,  solid: false },
     // Mail & copy room

@@ -5,6 +5,8 @@
  * To add a task: add an interactable with a new `type` in officeMap.js, then add
  * an entry here. `target: 'own_desk'` means "your personal desk" specifically.
  */
+import { BREAKER_HOLD_MS } from './constants.js';
+
 export const TASKS = [
   // Desk tasks — safe, because you're at your desk.
   { id: 'emails',    label: 'Answer your emails',           target: 'own_desk',       duration: 5000, desk: true },
@@ -26,6 +28,15 @@ export const TASKS = [
 ];
 
 export const TASKS_BY_ID = new Map(TASKS.map((t) => [t.id, t]));
+
+/** Timed holds that aren't to-do items (they share the task progress bar). */
+export const ACTIONS = [
+  { id: 'breaker_off', label: 'Cutting the power',   target: 'breaker', duration: BREAKER_HOLD_MS, action: true },
+  { id: 'breaker_on',  label: 'Restoring the power', target: 'breaker', duration: BREAKER_HOLD_MS, action: true },
+];
+
+/** Tasks and actions together, for anything that shows a progress bar. */
+export const TIMED_BY_ID = new Map([...TASKS, ...ACTIONS].map((t) => [t.id, t]));
 
 /** Human-readable hint for where a task happens (used in the task list). */
 export const TARGET_HINT = {

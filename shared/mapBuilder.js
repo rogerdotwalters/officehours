@@ -81,7 +81,7 @@ export function buildOfficeMap(def = OFFICE) {
     doors.push(...built.doorRects);
   }
 
-  const desks = def.desks.map((d) => {
+  const desks = (def.desks ?? []).map((d) => {
     const w = d.w ?? DESK_W;
     const h = d.h ?? DESK_H;
     return { ...d, w, h, seat: { x: d.x + w / 2, y: d.y + h + SEAT_OFFSET } };
@@ -89,14 +89,14 @@ export function buildOfficeMap(def = OFFICE) {
 
   // Desks are interactable too (desk tasks), with type 'desk'.
   const interactables = [
-    ...def.interactables.map((o) => ({ ...o })),
+    ...(def.interactables ?? []).map((o) => ({ ...o })),
     ...desks.map((d) => ({ id: d.id, type: 'desk', label: 'Desk', x: d.x, y: d.y, w: d.w, h: d.h, solid: true, room: d.room })),
   ];
 
   const colliders = [
     ...walls,
     ...interactables.filter((o) => o.solid),
-    ...def.decor.filter((o) => o.solid),
+    ...(def.decor ?? []).filter((o) => o.solid),
   ];
 
   const byId = new Map(interactables.map((o) => [o.id, o]));
@@ -112,8 +112,9 @@ export function buildOfficeMap(def = OFFICE) {
     height: def.height,
     wallThickness: t,
     rooms: def.rooms,
-    decor: def.decor,
-    meetingSeats: def.meetingSeats,
+    decor: def.decor ?? [],
+    meetingSeats: def.meetingSeats ?? [],
+    spawnPoints: def.spawnPoints ?? [],
     walls,
     doors,
     desks,

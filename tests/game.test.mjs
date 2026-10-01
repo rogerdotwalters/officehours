@@ -1,11 +1,15 @@
 /**
  * Headless tests for the authoritative game logic. No Cloudflare runtime needed:
- *   node --test tests/
+ *   npm test   (node --test tests/*.test.mjs)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../server/game/Game.js';
-import { PHASE, STATUS, START_FREEZE_MS, REPORT_INITIAL_COOLDOWN_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS } from '../shared/constants.js';
+import { PHASE, STATUS, ROLE, START_FREEZE_MS, REPORT_INITIAL_COOLDOWN_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS, DESK_CHECK_INITIAL_DELAY_MS } from '../shared/constants.js';
+import { DEFAULT_SETTINGS, sanitizeSettings } from '../shared/settings.js';
+import { LOBBY_ROOM } from '../shared/lobbyMap.js';
+import { TASKS } from '../shared/tasks.js';
+import { TaskSystem } from '../server/game/TaskSystem.js';
 import { S2C } from '../shared/protocol.js';
 import { buildOfficeMap, distPointRect } from '../shared/mapBuilder.js';
 import { positionBlocked } from '../shared/physics.js';
@@ -20,17 +24,24 @@ function makeGame() {
   return { game, outbox };
 }
 
-function startedGame(n = 4) {
+function startedGame(n = 4, settings = { snitches: 0 }) {
   const { game, outbox } = makeGame();
   let now = 1_000_000;
   const players = [];
   for (let i = 0; i < n; i++) players.push(game.join(`P${i}`, null, now).player);
+  game.handleSettings(players[0], settings);
   players.slice(1).forEach((p) => game.handleReady(p, true));
   game.handleStart(players[0], now);
   assert.equal(game.phase, PHASE.PLAYING);
   const mgmt = players.find((p) => p.isManagement);
-  const workers = players.filter((p) => !p.isManagement);
-  return { game, outbox, players, mgmt, workers, now };
+  const workers = players.filter((p) => p.role === ROLE.WORKER);
+  const snitches = players.filter((p) => p.isSnitch);
+  return { game, outbox, players, mgmt, workers, snitches, now };
+}
+
+/** Mark every task of the day as handed out and done. */
+function finishDay(game, p) {
+  p.tasks = Array.from({ length: game.match.tasks }, (_, i) => ({ id: TASKS[i].id, done: true }));
 }
 
 const lastToast = (outbox, id) => [...outbox].reverse().find((m) => m.to === id && m.t === S2C.TOAST)?.d.text;
@@ -90,7 +101,8 @@ test('tasks: must stay in range for the full duration', () => {
   const { game, workers } = startedGame();
   const w = workers[0];
   const now = 1_000_000 + START_FREEZE_MS + 10;
-  const desk = game.map.getInteractable(w.deskId);
+  const desk = game.office.getInteractable(w.deskId);
+  w.tasks = [{ id: 'emails', done: false }];
 
   game.handleInteract(w, w.deskId, now);
   assert.ok(w.activeTask, 'desk task started');
@@ -143,9 +155,9 @@ test('reports: blocked at desk, on cooldown, out of range; allowed when caught a
 
 test('meeting: voting out Management ends the game for workers', () => {
   const { game, mgmt, workers, players } = startedGame(4);
-  let now = 1_000_000 + MEETING_COOLDOWN_MS + 10;
+  let now = 1_000_000 + START_FREEZE_MS + MEETING_COOLDOWN_MS + 10;
   const caller = workers[0];
-  const bell = game.map.getInteractable('bell');
+  const bell = game.office.getInteractable('bell');
   caller.x = bell.x + bell.w / 2; caller.y = bell.y + bell.h + 20;
   game.handleInteract(caller, 'bell', now);
   assert.equal(game.phase, PHASE.MEETING);
@@ -160,7 +172,7 @@ test('meeting: voting out Management ends the game for workers', () => {
 
 test('meeting: tie ejects nobody and play resumes at desks', () => {
   const { game, mgmt, workers } = startedGame(4);
-  const now = 1_000_000 + MEETING_COOLDOWN_MS + 10;
+  const now = 1_000_000 + START_FREEZE_MS + MEETING_COOLDOWN_MS + 10;
   game.startMeeting(workers[0], now);
   game.handleVote(workers[0], mgmt.id, now);
   game.handleVote(workers[1], workers[2].id, now);
@@ -177,9 +189,9 @@ test('meeting: tie ejects nobody and play resumes at desks', () => {
 test('win: enough workers clock out', () => {
   const { game, workers } = startedGame(5); // 4 workers -> goal 2
   const now = 1_000_000 + START_FREEZE_MS + 10;
-  const clock = game.map.getInteractable('time_clock');
+  const clock = game.office.getInteractable('time_clock');
   for (const w of workers.slice(0, 2)) {
-    w.tasks.forEach((t) => (t.done = true));
+    finishDay(game, w);
     w.x = clock.x + clock.w / 2; w.y = clock.y - 20;
     game.handleInteract(w, 'time_clock', now);
   }
@@ -189,7 +201,7 @@ test('win: enough workers clock out', () => {
 
 test('win: Management wins when the goal becomes unreachable', () => {
   const { game, mgmt, workers } = startedGame(3); // 2 workers -> goal 1
-  let now = 1_000_000 + REPORT_INITIAL_COOLDOWN_MS + 10;
+  let now = 1_000_000 + START_FREEZE_MS + REPORT_INITIAL_COOLDOWN_MS + 10;
   for (const w of workers) {
     w.x = 300; w.y = 540; mgmt.x = 350; mgmt.y = 540;
     game.handleReport(mgmt, w.id, now);
@@ -234,4 +246,225 @@ test('map: every desk, prop and meeting seat is reachable on foot', () => {
   }
   for (const d of map.desks) assert.ok(reachable((x, y) => Math.hypot(x - d.seat.x, y - d.seat.y) < 12), `seat ${d.id}`);
   for (const s of map.meetingSeats) assert.ok(reachable((x, y) => Math.hypot(x - s.x, y - s.y) < 12), 'meeting seat');
+});
+
+// ===========================================================================
+// Settings, progressive tasks, snitches, desk checks, sight, lobby room
+// ===========================================================================
+
+test('settings: clamped, snapped, host-only, frozen at start', () => {
+  const s = sanitizeSettings({ playerSpeed: 9999, tasks: 4.4, sightRange: 'lots', bogus: 1 });
+  assert.equal(s.playerSpeed, 280);
+  assert.equal(s.tasks, 4);
+  assert.equal(s.sightRange, DEFAULT_SETTINGS.sightRange);
+  assert.equal('bogus' in s, false);
+
+  const { game } = makeGame();
+  const host = game.join('Host', null, 0).player;
+  const guest = game.join('Guest', null, 0).player;
+  game.handleSettings(guest, { tasks: 9 });
+  assert.equal(game.settings.tasks, DEFAULT_SETTINGS.tasks, 'guest cannot change settings');
+  game.handleSettings(host, { tasks: 9 });
+  assert.equal(game.settings.tasks, 9);
+});
+
+test('tasks: chance weights are respected and 0 means never', () => {
+  const catalogue = [
+    { id: 'a', target: 'x', duration: 1, chance: 9 },
+    { id: 'b', target: 'x', duration: 1, chance: 1 },
+    { id: 'off', target: 'x', duration: 1, chance: 0 },
+  ];
+  const ts = new TaskSystem(null, catalogue);
+  const counts = { a: 0, b: 0, off: 0 };
+  for (let i = 0; i < 4000; i++) {
+    const p = {};
+    ts.reset(p);
+    counts[ts.issueNext(p).id]++;
+  }
+  assert.equal(counts.off, 0);
+  assert.ok(counts.a > counts.b * 5, JSON.stringify(counts));
+
+  // No repeats within a match while the catalogue lasts.
+  const p = {};
+  ts.reset(p);
+  ts.issueNext(p); ts.issueNext(p);
+  assert.notEqual(p.tasks[0].id, p.tasks[1].id);
+});
+
+test('tasks: handed out one per section; clock pauses during meetings', () => {
+  const { game, players, workers } = startedGame(4, { snitches: 0, tasks: 4, workdayMinutes: 4 });
+  const section = 60_000; // 4 min / 4 tasks
+  const t0 = 1_000_000 + START_FREEZE_MS;
+  for (const p of players) assert.equal(p.tasks.length, 1, 'first task at the start');
+
+  game.tick(t0 + section - 100);
+  assert.equal(workers[0].tasks.length, 1);
+  game.tick(t0 + section + 10);
+  assert.equal(workers[0].tasks.length, 2, 'second task after one section');
+
+  // A 50s meeting doesn't eat into the workday.
+  game.startMeeting(workers[0], t0 + section + 100);
+  game.tick(t0 + section + 50_000);
+  game.endMeeting(t0 + section + 50_100);
+  game.tick(t0 + 2 * section + 10);
+  assert.equal(workers[0].tasks.length, 2, 'paused time does not count');
+  game.tick(t0 + 2 * section + 50_100);
+  assert.equal(workers[0].tasks.length, 3);
+
+  // Can't clock out before the last task has even been handed out.
+  workers[0].tasks.forEach((t) => (t.done = true));
+  const clock = game.office.getInteractable('time_clock');
+  workers[0].x = clock.x + clock.w / 2; workers[0].y = clock.y - 20;
+  game.handleInteract(workers[0], 'time_clock', t0 + 2 * section + 50_200);
+  assert.equal(workers[0].status, STATUS.ACTIVE);
+});
+
+test('workday: Management wins if the day ends first', () => {
+  const { game } = startedGame(4, { snitches: 0, tasks: 3, workdayMinutes: 3 });
+  const t0 = 1_000_000 + START_FREEZE_MS;
+  game.tick(t0 + 3 * 60_000 + 10);
+  assert.equal(game.phase, PHASE.ENDED);
+  assert.equal(game.result.winner, 'management');
+});
+
+test('snitches: count clamps to keep 2 real workers; private team chat', () => {
+  const small = startedGame(4, { snitches: 3 });
+  assert.equal(small.snitches.length, 1, '4 players -> 1 snitch max');
+  assert.equal(small.workers.length, 2);
+
+  const { game, outbox, mgmt, snitches, workers } = startedGame(7, { snitches: 2 });
+  assert.equal(snitches.length, 2);
+
+  // Team members learn about each other; workers learn nothing.
+  const selfOf = (p) => [...outbox].reverse().find((m) => m.to === p.id && m.t === S2C.SELF).d;
+  assert.deepEqual(selfOf(snitches[0]).team.map((t) => t.id).sort(), [mgmt.id, snitches[1].id].sort());
+  assert.deepEqual(selfOf(workers[0]).team, []);
+
+  // Back-office chat reaches only the team, and workers can't post to it.
+  outbox.length = 0;
+  game.handleChat(snitches[0], 'Blue is in the break room', 'team', 1);
+  const recipients = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
+  assert.deepEqual(recipients, [mgmt.id, ...snitches.map((s) => s.id)].sort());
+  outbox.length = 0;
+  game.handleChat(workers[0], 'let me in', 'team', 1);
+  assert.equal(outbox.filter((m) => m.t === S2C.CHAT).length, 0);
+
+  // Snitches can't clock out, and don't count toward the workers' goal.
+  finishDay(game, snitches[0]);
+  const clock = game.office.getInteractable('time_clock');
+  snitches[0].x = clock.x + clock.w / 2; snitches[0].y = clock.y - 20;
+  game.handleInteract(snitches[0], 'time_clock', 1_000_000 + START_FREEZE_MS + 10);
+  assert.equal(snitches[0].status, STATUS.ACTIVE);
+  assert.equal(game.workdayProgress().goal, 2); // 4 real workers
+});
+
+test('desk check: away from your desk when it ends = sent home', () => {
+  const { game, mgmt, workers } = startedGame(4, { snitches: 0, deskCheckWarning: 10, deskCheckCooldown: 60 });
+  let now = 1_000_000 + START_FREEZE_MS + 10;
+
+  game.handleDeskCheck(workers[0], now + DESK_CHECK_INITIAL_DELAY_MS);
+  assert.equal(game.deskCheck, null, 'workers cannot call one');
+  game.handleDeskCheck(mgmt, now);
+  assert.equal(game.deskCheck, null, 'initial cooldown');
+
+  now += DESK_CHECK_INITIAL_DELAY_MS;
+  game.handleDeskCheck(mgmt, now);
+  assert.ok(game.deskCheck);
+
+  const [atDesk, away] = workers;
+  const seat = game.roles.seatOf(atDesk);
+  atDesk.x = seat.x; atDesk.y = seat.y;
+  away.x = 300; away.y = 540;
+  mgmt.x = 1000; mgmt.y = 540; // Management itself is exempt
+  game.tick(now + 9_000);
+  assert.equal(away.status, STATUS.ACTIVE, 'still counting down');
+  game.tick(now + 10_001);
+  assert.equal(away.status, STATUS.SENT_HOME);
+  assert.equal(atDesk.status, STATUS.ACTIVE);
+  assert.equal(mgmt.status, STATUS.ACTIVE);
+  assert.equal(game.deskCheck, null);
+  assert.ok(mgmt.deskCheckReadyAt >= now + 10_000 + 60_000, 'cooldown starts after it resolves');
+});
+
+test('sight: snapshots only include players within sight range', () => {
+  const { game, outbox, workers } = startedGame(4, { snitches: 0, sightRange: 300 });
+  const [a, b, c] = workers;
+  a.x = 300; a.y = 540; b.x = 500; b.y = 540; c.x = 1500; c.y = 540;
+  outbox.length = 0;
+  game.tick(1_000_000 + START_FREEZE_MS + 10);
+  const snapFor = (p) => outbox.find((m) => m.to === p.id && m.t === S2C.SNAPSHOT).d.p.map((e) => e[0]);
+  const seen = snapFor(a);
+  assert.ok(seen.includes(a.id) && seen.includes(b.id));
+  assert.ok(!seen.includes(c.id), 'far player hidden');
+
+  // Out of the office: you can watch everyone.
+  c.status = STATUS.SENT_HOME;
+  outbox.length = 0;
+  game.tick(1_000_000 + START_FREEZE_MS + 60);
+  assert.ok(snapFor(c).includes(a.id) && snapFor(c).includes(b.id));
+});
+
+test('lobby: players spawn apart and can walk around the waiting room', () => {
+  const { game } = makeGame();
+  const a = game.join('A', null, 0).player;
+  const b = game.join('B', null, 0).player;
+  assert.notDeepEqual({ x: a.x, y: a.y }, { x: b.x, y: b.y });
+  const start = a.x;
+  game.handleInput(a, 1, 0);
+  for (let i = 0; i < 10; i++) game.tick(i * TICK_MS);
+  assert.ok(a.x > start, 'moved in the lobby');
+  assert.ok(a.x < LOBBY_ROOM.width);
+});
+
+test('lobby map: spawns are free and connected', () => {
+  const map = buildOfficeMap(LOBBY_ROOM);
+  for (const s of map.spawnPoints) assert.equal(positionBlocked(map, s.x, s.y, 14), false, JSON.stringify(s));
+  const STEP = 8;
+  const key = (x, y) => `${x},${y}`;
+  const s0 = map.spawnPoints[0];
+  const seen = new Set([key(s0.x, s0.y)]);
+  const queue = [[s0.x, s0.y]];
+  while (queue.length) {
+    const [x, y] = queue.pop();
+    for (const [dx, dy] of [[STEP, 0], [-STEP, 0], [0, STEP], [0, -STEP]]) {
+      const nx = x + dx, ny = y + dy, k = key(nx, ny);
+      if (seen.has(k) || positionBlocked(map, nx, ny, 14)) continue;
+      seen.add(k); queue.push([nx, ny]);
+    }
+  }
+  const pts = [...seen].map((k) => k.split(',').map(Number));
+  for (const s of map.spawnPoints) assert.ok(pts.some(([x, y]) => Math.hypot(x - s.x, y - s.y) < 12), JSON.stringify(s));
+});
+
+test('chat: water cooler reaches workers and snitches, never Management', () => {
+  const { game, outbox, mgmt, snitches, workers } = startedGame(6, { snitches: 1 });
+  const [snitch] = snitches;
+  const chatTo = () => outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
+
+  outbox.length = 0;
+  game.handleChat(workers[0], 'Who rang the bell?', 'crew', 1);
+  assert.deepEqual(chatTo(), [...workers, snitch].map((p) => p.id).sort(), 'workers + snitch hear it');
+
+  // The snitch can post in both channels.
+  outbox.length = 0;
+  game.handleChat(snitch, 'Not me!', 'crew', 1);
+  assert.ok(!chatTo().includes(mgmt.id));
+  assert.equal(chatTo().length, workers.length + 1);
+  outbox.length = 0;
+  game.handleChat(snitch, 'They suspect Ana', 'team', 1);
+  assert.deepEqual(chatTo(), [mgmt.id, snitch.id].sort());
+
+  // Management can't post to (or read) the water cooler.
+  outbox.length = 0;
+  game.handleChat(mgmt, 'hello?', 'crew', 1);
+  assert.equal(chatTo().length, 0);
+
+  // Reconnecting players get only the backlogs they're allowed to read.
+  outbox.length = 0;
+  game.sendFullState(mgmt, 1);
+  const mgmtChannels = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort();
+  assert.deepEqual(mgmtChannels, ['all', 'team']);
+  outbox.length = 0;
+  game.sendFullState(snitch, 1);
+  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['all', 'crew', 'team']);
 });

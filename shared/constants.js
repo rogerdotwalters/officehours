@@ -17,17 +17,17 @@ export const RECONNECT_GRACE_MS = 45_000;    // a dropped player keeps their sea
 
 // ---- Movement / geometry ---------------------------------------------------
 export const PLAYER_RADIUS = 14;
-export const PLAYER_SPEED = 190;             // world units per second
+export const PLAYER_SPEED = 190;             // default world units / second (lobby setting overrides)
 export const INTERACT_RANGE = 46;            // max distance from player centre to an object's edge
 export const DESK_RANGE = 58;                // within this distance of your seat = "at your desk"
 
 // ---- Roles & rules --------------------------------------------------------
-export const TASKS_PER_WORKER = 5;           // 1 desk task + (N-1) tasks around the office
-export const GO_HOME_RATIO = 0.5;            // fraction of workers who must clock out for a crew win
-export const START_FREEZE_MS = 3500;         // nobody moves while roles are revealed
-export const REPORT_RANGE = 260;             // Management must be this close to report someone
-export const REPORT_COOLDOWN_MS = 25_000;
+// Tasks per person, workday length, speed, sight, report range/cooldown, snitch
+// count and desk checks are lobby settings: see shared/settings.js.
+export const GO_HOME_RATIO = 0.5;            // fraction of real workers who must clock out for a win
+export const START_FREEZE_MS = 4500;         // nobody moves while roles are revealed
 export const REPORT_INITIAL_COOLDOWN_MS = 15_000;
+export const DESK_CHECK_INITIAL_DELAY_MS = 45_000; // first desk check allowed this long into the day
 
 // ---- Meetings -------------------------------------------------------------
 export const MEETING_DURATION_MS = 70_000;   // discussion + voting
@@ -59,7 +59,12 @@ export const STATUS = Object.freeze({
 export const ROLE = Object.freeze({
   WORKER: 'worker',
   MANAGEMENT: 'management',
+  SNITCH: 'snitch',        // works like a worker, secretly on Management's side
 });
+
+// Workday clock shown in the HUD: the match maps onto 9:00 AM to 5:00 PM.
+export const OFFICE_OPEN_HOUR = 9;
+export const OFFICE_CLOSE_HOUR = 17;
 
 // Ten distinct shirt colours. Index = colour id.
 export const COLORS = [

@@ -1,16 +1,22 @@
 /**
  * ClientGame — the client's view of the world.
  *
- * - Stores the latest server state (room roster, snapshots, private self state).
+ * - Stores the latest server state (room roster, settings, snapshots, private self state).
  * - Predicts the local player's movement with the SAME physics as the server so
  *   controls feel instant, then gently reconciles toward the server position.
  * - Interpolates remote players between snapshots for smooth motion.
  *
- * Nothing here decides game outcomes; the server is authoritative.
+ * Nothing here decides game outcomes; the server is authoritative. The server also
+ * only sends players within your sight range, so the fog drawn by the renderer is
+ * cosmetic: what's hidden simply isn't here.
  */
 import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
+import { LOBBY_ROOM } from '../../shared/lobbyMap.js';
 import { stepMovement } from '../../shared/physics.js';
-import { PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, REPORT_RANGE, COLORS } from '../../shared/constants.js';
+import { DEFAULT_SETTINGS } from '../../shared/settings.js';
+import {
+  PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, COLORS, OFFICE_OPEN_HOUR, OFFICE_CLOSE_HOUR,
+} from '../../shared/constants.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
 
@@ -19,9 +25,10 @@ const BUFFER_SIZE = 12;
 
 export class ClientGame {
   constructor() {
-    this.map = buildOfficeMap();
+    this.officeMap = buildOfficeMap();
+    this.lobbyMap = buildOfficeMap(LOBBY_ROOM);
     this.selfId = null;
-    this.room = null;          // latest ROOM message
+    this.room = null;          // latest ROOM message (+ receivedAt)
     this.roster = new Map();   // id -> public info
     this.self = null;          // latest SELF message (+ local timestamps)
     this.entities = new Map(); // id -> { buffer: [{t,x,y}], flags, x, y }
@@ -32,8 +39,8 @@ export class ClientGame {
   }
 
   // ---- Applying server messages -------------------------------------------
-  applyRoom(room) {
-    this.room = room;
+  applyRoom(room, now) {
+    this.room = { ...room, receivedAt: now };
     this.roster = new Map(room.players.map((p) => [p.id, p]));
   }
 
@@ -42,6 +49,7 @@ export class ClientGame {
       ...self,
       receivedAt: now,
       reportReadyAt: self.reportReadyIn == null ? null : now + self.reportReadyIn,
+      deskCheckReadyAt: self.deskCheckReadyIn == null ? null : now + self.deskCheckReadyIn,
       meetingReadyAt: now + self.meetingReadyIn,
       freezeUntil: now + self.freezeMs,
     };
@@ -67,7 +75,7 @@ export class ClientGame {
         if (!this.local || Math.hypot(this.local.x - x, this.local.y - y) > SNAP_DISTANCE) this.local = { x, y };
       }
     }
-    // Players missing from the snapshot are no longer in the office.
+    // Players missing from the snapshot are out of sight or out of the office.
     for (const id of this.entities.keys()) if (!seen.has(id)) this.entities.delete(id);
     if (!seen.has(this.selfId)) { this.local = null; this.serverSelf = null; }
   }
@@ -82,16 +90,66 @@ export class ClientGame {
 
   // ---- Derived state -------------------------------------------------------
   get phase() { return this.room?.phase ?? PHASE.LOBBY; }
+  get inLobby() { return this.phase === PHASE.LOBBY; }
+  get map() { return this.inLobby ? this.lobbyMap : this.officeMap; }
+  get settings() { return this.room?.settings ?? DEFAULT_SETTINGS; }
   get me() { return this.roster.get(this.selfId) ?? null; }
   get isHost() { return this.room?.hostId === this.selfId; }
-  get isManagement() { return this.self?.role === ROLE.MANAGEMENT; }
-  get inOffice() { return !!this.local && this.self?.status === STATUS.ACTIVE; }
+  get role() { return this.self?.role ?? null; }
+  get isManagement() { return this.role === ROLE.MANAGEMENT; }
+  get isSnitch() { return this.role === ROLE.SNITCH; }
+  get isTeam() { return this.isManagement || this.isSnitch; }
+  get inOffice() { return !!this.local && !this.inLobby && this.self?.status === STATUS.ACTIVE; }
 
   nameOf(id) { return this.roster.get(id)?.name ?? 'Someone'; }
   colorOf(id) { return COLORS[this.roster.get(id)?.colorId ?? 9].hex; }
 
+  /** Teammate role for a player id, as seen by me (Management/snitches only). */
+  teamRoleOf(id) {
+    return this.self?.team?.find((t) => t.id === id)?.role ?? null;
+  }
+
   canMove(now) {
+    if (!this.local) return false;
+    if (this.inLobby) return true;
     return this.phase === PHASE.PLAYING && this.inOffice && now >= (this.self?.freezeUntil ?? 0);
+  }
+
+  // ---- Workday clock -------------------------------------------------------
+  /** { elapsed, lengthMs, sections, sectionMs, section, sectionProgress, running } or null. */
+  dayInfo(now) {
+    const d = this.room?.day;
+    if (!d) return null;
+    const drift = d.running ? now - this.room.receivedAt : 0;
+    const elapsed = Math.max(0, Math.min(d.lengthMs, d.elapsed + drift));
+    const sectionMs = d.lengthMs / d.sections;
+    const section = Math.min(d.sections - 1, Math.floor(elapsed / sectionMs));
+    return {
+      ...d,
+      elapsed,
+      sectionMs,
+      section,
+      sectionProgress: (elapsed - section * sectionMs) / sectionMs,
+      nextTaskIn: section < d.sections - 1 ? (section + 1) * sectionMs - elapsed : null,
+      timeLeft: d.lengthMs - elapsed,
+    };
+  }
+
+  /** "11:20 AM" style office time for a point in the workday. */
+  officeTime(elapsed, lengthMs) {
+    const hours = OFFICE_OPEN_HOUR + (OFFICE_CLOSE_HOUR - OFFICE_OPEN_HOUR) * (elapsed / lengthMs);
+    const totalMin = Math.floor(hours * 60 / 10) * 10; // tick in 10-minute steps, like a wall clock
+    const h24 = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const h12 = ((h24 + 11) % 12) + 1;
+    return `${h12}:${String(m).padStart(2, '0')} ${h24 < 12 ? 'AM' : 'PM'}`;
+  }
+
+  /** Desk check countdown in ms, or null. */
+  deskCheckLeft(now) {
+    const dc = this.room?.deskCheck;
+    if (!dc) return null;
+    return Math.max(0, dc.msLeft - (now - this.room.receivedAt));
   }
 
   // ---- Per-frame update ----------------------------------------------------
@@ -99,7 +157,7 @@ export class ClientGame {
   update(dt, dir, now) {
     if (!this.local || !this.serverSelf) return;
     const moving = this.canMove(now) && (dir.dx || dir.dy);
-    if (moving) this.local = stepMovement(this.map, this.local, dir, dt);
+    if (moving) this.local = stepMovement(this.map, this.local, dir, dt, undefined, this.settings.playerSpeed);
 
     // Reconciliation: drift toward the server, harder when standing still.
     const ex = this.serverSelf.x - this.local.x;
@@ -145,9 +203,9 @@ export class ClientGame {
   }
 
   // ---- Interaction helpers -------------------------------------------------
-  /** Nearest interactable within range, with a label describing what E will do. */
+  /** Nearest interactable within range, with a label describing what Use will do. */
   nearestUsable() {
-    if (!this.local) return null;
+    if (!this.local || this.inLobby) return null;
     const near = this.map.interactablesNear(this.local.x, this.local.y, INTERACT_RANGE);
     for (const o of near) {
       const action = this.actionFor(o);
@@ -159,7 +217,7 @@ export class ClientGame {
   /** What would interacting with this object do for me? (display only) */
   actionFor(o) {
     if (o.type === 'meeting_bell') return 'Call an all-hands meeting';
-    if (o.type === 'time_clock') return this.isManagement ? null : 'Clock out and go home';
+    if (o.type === 'time_clock') return this.isTeam ? null : 'Clock out and go home';
     const task = this.pendingTaskFor(o);
     return task ? task.label : null;
   }
@@ -175,17 +233,24 @@ export class ClientGame {
 
   /** Objects that would progress my to-do list (for highlighting). */
   taskTargets() {
+    if (this.inLobby) return [];
     return this.map.interactables.filter((o) => this.pendingTaskFor(o));
+  }
+
+  allTasksDone() {
+    const s = this.self;
+    return !!s && s.tasks.length >= s.totalTasks && s.tasks.every((t) => t.done);
   }
 
   /** Management only: players I could report right now. */
   reportableTargets() {
-    if (!this.isManagement || !this.local) return [];
+    if (!this.isManagement || !this.local || this.phase !== PHASE.PLAYING) return [];
+    const range = this.settings.reportRange;
     const out = [];
     for (const [id, e] of this.entities) {
       if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
       const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
-      out.push({ id, d, inRange: d <= REPORT_RANGE });
+      out.push({ id, d, inRange: d <= range });
     }
     return out.sort((a, b) => a.d - b.d);
   }

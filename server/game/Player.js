@@ -27,15 +27,26 @@ export class Player {
     this.x = 0;
     this.y = 0;
     this.input = { dx: 0, dy: 0 };
-    this.tasks = [];              // [{ id, done }]
+    this.tasks = [];              // [{ id, done }]  grows during the day
+    this.taskHistory = new Set(); // task ids handed out this match (no repeats)
     this.activeTask = null;       // { taskId, objectId, startedAt, duration }
     this.reportReadyAt = 0;
+    this.deskCheckReadyAt = 0;
     this.emergencyCallsLeft = 0;
     this.selfDirty = true;        // private state changed -> resend SELF
   }
 
   get isManagement() {
     return this.role === ROLE.MANAGEMENT;
+  }
+
+  get isSnitch() {
+    return this.role === ROLE.SNITCH;
+  }
+
+  /** Management's side: Management plus snitches. */
+  get isTeam() {
+    return this.role === ROLE.MANAGEMENT || this.role === ROLE.SNITCH;
   }
 
   get isActive() {

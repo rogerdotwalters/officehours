@@ -169,6 +169,18 @@ const DECOR = {
     circle(ctx, o.x + o.w / 2, o.y + o.h / 2, o.w / 2, '#b0673f', '#6e3b20');
     leaves(ctx, o.x + o.w / 2, o.y + o.h / 2, o.w / 2 + 4);
   },
+  elevator: (ctx, o) => {
+    box(ctx, o, '#b9c0c9', '#5d6673', 2);
+    ctx.fillStyle = '#8f98a5';
+    ctx.fillRect(o.x + o.w / 2 - 1, o.y + 2, 2, o.h - 4);
+    circle(ctx, o.x + o.w + 10, o.y + o.h / 2, 4, '#ffd35c', '#5d6673');
+  },
+  rug: (ctx, o) => {
+    roundRect(ctx, o.x, o.y, o.w, o.h, 14);
+    ctx.fillStyle = '#c96f55'; ctx.fill();
+    roundRect(ctx, o.x + 10, o.y + 10, o.w - 20, o.h - 20, 10);
+    ctx.lineWidth = 3; ctx.strokeStyle = '#ecd9a4'; ctx.stroke();
+  },
   copier: (ctx, o) => {
     box(ctx, o, '#cfd4da', '#5d6673', 4);
     ctx.fillStyle = '#5d6673'; ctx.fillRect(o.x + 8, o.y + 8, o.w - 16, 12);

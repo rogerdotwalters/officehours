@@ -16,7 +16,9 @@ export const C2S = Object.freeze({
   CANCEL: 'cancel',        // {}  stop current task
   REPORT: 'report',        // { targetId }  Management only
   VOTE: 'vote',            // { targetId }  a player id or 'skip'
-  CHAT: 'chat',            // { text }
+  CHAT: 'chat',            // { text, channel?: 'all' | 'team' | 'crew' }
+  SETTINGS: 'settings',    // { settings: {...partial} }  host only, lobby only
+  DESK_CHECK: 'deskcheck', // {}  Management only
   RETURN_TO_LOBBY: 'lobby',// {}  host only, after game over
   PING: 'ping',            // { at }
 });
@@ -26,11 +28,11 @@ export const S2C = Object.freeze({
   ERROR: 'error',          // { code, message }
   ROOM: 'room',            // roster + phase (public info only)
   GAME_START: 'start',     // { freezeMs }
-  SNAPSHOT: 'snap',        // { p: [[id, x, y, flags], ...] }
+  SNAPSHOT: 'snap',        // { p: [[id, x, y, flags], ...] }  only players you can see
   SELF: 'self',            // private: role, desk, tasks, cooldowns
   EVENT: 'event',          // { kind, ... } feed items
   MEETING: 'meeting',      // meeting state (who voted is public, for whom is not until the end)
-  CHAT: 'chat',            // { from, text, at }
+  CHAT: 'chat',            // { line } or { backlog }, each with channel 'all' | 'team' | 'crew'
   GAME_OVER: 'over',       // { winner, reason, managementId }
   TOAST: 'toast',          // { text }  private feedback ("Nothing to do here")
   PONG: 'pong',            // { at }

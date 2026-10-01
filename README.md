@@ -59,7 +59,7 @@ If you prefer to host the static client on Pages:
 
 ## Test rooms
 
-Test rooms let you try every feature without gathering a full game. On the menu, press **Open a test room** (or, on a server where they're locked, open **Testing?** and type the test code). Inside one, a striped **Test tools** tab on the left edge opens a drawer with:
+Test rooms let you try every feature without gathering a full game. On the menu, press **Open a test room** (or, on a server where they're locked, type the code in the **Test code** box and press **Test room**). Inside one, a striped **Test tools** tab on the left edge opens a drawer with:
 
 - **Invite someone:** the room code and an invite link (copy or share). Anyone with the link can join, even mid-match; they get a free desk and the tasks handed out so far.
 - **Your role:** pick Worker, Management or Snitch before starting, or switch live during the match. There's only ever one Management; whoever had it becomes a worker.
@@ -75,7 +75,7 @@ A caution-tape stripe along the top of the screen tells you you're in a test roo
 
 **On, off, or behind a code.** `ENABLE_SANDBOX` in `wrangler.toml` is `"false"` by default, so a deployed server doesn't offer test rooms to the public.
 - **Locally:** `.dev.vars` (git-ignored) holds `ENABLE_SANDBOX=true`, so `npm run dev` shows the **Open a test room** button. Create the file if you cloned fresh.
-- **In production, behind a code:** run `npx wrangler secret put SANDBOX_CODE` and enter a long, hard-to-guess code. The menu then shows a small **Testing?** fold-out; typing the code there opens a test room. Without the right code the server refuses. The code is only ever checked on the server.
+- **In production, behind a code:** run `npx wrangler secret put SANDBOX_CODE` and enter a long, hard-to-guess code. The menu then shows a **Test code** box under the room code (phones included); typing the code there and pressing **Test room** opens a test room. Without the right code the server refuses. The code is only ever checked on the server.
 - **For everyone:** set `ENABLE_SANDBOX = "true"` and redeploy.
 
 **Removing it completely.** Delete `server/dev/`, `client/js/dev/` and `tests/sandbox.test.mjs`, then delete every line tagged `SANDBOX`:

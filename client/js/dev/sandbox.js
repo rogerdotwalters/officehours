@@ -263,8 +263,8 @@ async function addMenuButton(ctx) {
   const createBtn = document.getElementById('menu-create');
   const btn = el('button', { class: 'btn sbx-menu-btn', type: 'button' }, 'Open a test room');
   const codeInput = config.sandbox ? null : el('input', {
-    class: 'sbx-code', type: 'password', autocomplete: 'off', spellcheck: 'false',
-    placeholder: 'Test code', 'aria-label': 'Test code',
+    type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+    enterkeyhint: 'go', placeholder: 'If you have one',
   });
   const open = async () => {
     const name = document.getElementById('menu-name').value.trim() || 'Tester';
@@ -283,11 +283,14 @@ async function addMenuButton(ctx) {
   btn.addEventListener('click', open);
 
   if (!codeInput) return createBtn.after(btn);
+  // Locked behind a code: a "Test code" box with its own button, laid out like the room-code row.
   codeInput.addEventListener('keydown', (e) => e.key === 'Enter' && open());
-  const fold = el('details', { class: 'sbx-unlock' },
-    el('summary', {}, 'Testing?'),
-    el('div', { class: 'sbx-row' }, codeInput, btn));
-  document.getElementById('menu-error').before(fold);
+  btn.textContent = 'Test room';
+  btn.className = 'btn sbx-menu-btn';
+  const row = el('div', { class: 'join-row sbx-unlock' },
+    el('label', { class: 'field' }, el('span', {}, 'Test code'), codeInput),
+    btn);
+  document.getElementById('menu-error').before(row);
 }
 
 function addStylesheet() {

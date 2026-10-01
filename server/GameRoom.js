@@ -9,9 +9,12 @@
  *   - clean up storage when the room has been empty for a while
  */
 import { Game } from './game/Game.js';
+import { handleDevCommand } from './dev/Sandbox.js'; // SANDBOX
 import { RateLimiter } from './net/RateLimiter.js';
 import { C2S, S2C, encode, decode } from '../shared/protocol.js';
 import { TICK_MS, MAX_MESSAGE_BYTES } from '../shared/constants.js';
+
+const CHAT_CHANNELS = new Set(['all', 'general', 'team', 'crew']);
 
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000;
 const MAX_FLOOD_STRIKES = 20;
@@ -31,8 +34,9 @@ export class GameRoom {
     // Internal: called by the Worker when a room code is minted.
     if (url.pathname === '/init' && request.method === 'POST') {
       if (await this.ctx.storage.get('code')) return new Response('exists', { status: 409 });
-      const { code } = await request.json();
+      const { code, sandbox } = await request.json();
       await this.ctx.storage.put('code', code);
+      if (sandbox) await this.ctx.storage.put('sandbox', true); // SANDBOX
       await this.ctx.storage.setAlarm(Date.now() + EMPTY_ROOM_TTL_MS);
       return new Response('ok');
     }
@@ -52,6 +56,7 @@ export class GameRoom {
     }
 
     if (!this.game) this.game = this.createGame(code);
+    if (await this.ctx.storage.get('sandbox')) this.game.sandbox = true; // SANDBOX: test room flag
     this.attach(server);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -152,8 +157,13 @@ export class GameRoom {
       case C2S.CANCEL:          return g.handleCancel(player);
       case C2S.REPORT:          return g.handleReport(player, msg.targetId, now);
       case C2S.VOTE:            return g.handleVote(player, msg.targetId, now);
-      case C2S.CHAT:            return g.handleChat(player, msg.text, now);
+      case C2S.CHAT:            return g.handleChat(player, msg.text, CHAT_CHANNELS.has(msg.channel) ? msg.channel : 'all', now);
       case C2S.TERMINAL:        return g.handleTerminal(player, msg.open, now);
+      case C2S.EMOTE:           return g.handleEmote(player, msg.id, now);
+      case C2S.SETTINGS:        return g.handleSettings(player, msg.settings);
+      case C2S.DESK_CHECK:      return g.handleDeskCheck(player, now);
+      case C2S.MINIGAME:        return g.handleMinigame(player, msg.answer, now);
+      case C2S.DEV:             return g.sandbox && handleDevCommand(g, player, msg, now); // SANDBOX
       case C2S.RETURN_TO_LOBBY: return g.handleReturnToLobby(player);
       case C2S.PING:            return this.sendTo(player.id, encode(S2C.PONG, { at: Number(msg.at) || 0 }));
       default:                  return; // unknown types are ignored

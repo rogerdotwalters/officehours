@@ -19,7 +19,7 @@ function isTyping() {
 export class Input {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{ onInteract, onReport, onCancel, onTerminal, onClick }} callbacks
+   * @param {{ onInteract, onReport, onDeskCheck, onChatKey, onEmote, onCancel, onClick }} callbacks
    */
   constructor(canvas, callbacks) {
     this.canvas = canvas;
@@ -51,8 +51,11 @@ export class Input {
     if (e.repeat) return;
     if (e.code === 'KeyE' || e.code === 'Space') { e.preventDefault(); this.cb.onInteract?.(); }
     else if (e.code === 'KeyR') this.cb.onReport?.();
-    else if (e.code === 'KeyT') { e.preventDefault(); this.cb.onTerminal?.(); }
+    else if (e.code === 'KeyF') this.cb.onDeskCheck?.();
+    else if (e.code === 'KeyT') { e.preventDefault(); this.cb.onChatKey?.('primary'); }
+    else if (e.code === 'KeyB') { e.preventDefault(); this.cb.onChatKey?.('team'); }
     else if (e.code === 'Escape' || e.code === 'KeyQ') this.cb.onCancel?.();
+    else if (/^Digit[1-8]$/.test(e.code)) this.cb.onEmote?.(Number(e.code.slice(5)) - 1);
   }
 
   /** Current movement direction, each axis in {-1, 0, 1}. */
@@ -75,9 +78,7 @@ export class Input {
 
     const base = document.getElementById('touch-stick');
     const knob = base.querySelector('.touch-stick__knob');
-    const use = document.getElementById('touch-use');
     base.hidden = false;
-    use.hidden = false;
 
     let pointerId = null;
     const reset = () => {
@@ -107,7 +108,6 @@ export class Input {
     base.addEventListener('pointermove', (e) => e.pointerId === pointerId && update(e));
     base.addEventListener('pointerup', reset);
     base.addEventListener('pointercancel', reset);
-
-    use.addEventListener('click', () => this.enabled && this.cb.onInteract?.());
+    // The on-screen Use / Report / Desk check buttons are regular DOM buttons (see UI.js).
   }
 }

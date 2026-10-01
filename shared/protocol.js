@@ -16,8 +16,13 @@ export const C2S = Object.freeze({
   CANCEL: 'cancel',        // {}  stop current task
   REPORT: 'report',        // { targetId }  Management only
   VOTE: 'vote',            // { targetId }  a player id or 'skip'
-  CHAT: 'chat',            // { text }  lobby/meeting chat, or the desk terminal while playing
+  CHAT: 'chat',            // { text, channel?: 'all' | 'general' | 'crew' | 'team' }  terminal channels need an open desk terminal
   TERMINAL: 'term',        // { open: bool }  open/close your desk terminal
+  EMOTE: 'emote',          // { id }  in-person reaction (see shared/emotes.js)
+  SETTINGS: 'settings',    // { settings: {...partial} }  host only, lobby only
+  DESK_CHECK: 'deskcheck', // {}  Management only
+  MINIGAME: 'minigame',    // { answer }  solution for the task window you have open
+  DEV: 'dev',              // { cmd, ... }  test rooms only (server/dev/Sandbox.js)  SANDBOX
   RETURN_TO_LOBBY: 'lobby',// {}  host only, after game over
   PING: 'ping',            // { at }
 });
@@ -27,12 +32,13 @@ export const S2C = Object.freeze({
   ERROR: 'error',          // { code, message }
   ROOM: 'room',            // roster + phase (public info only)
   GAME_START: 'start',     // { freezeMs }
-  SNAPSHOT: 'snap',        // { p: [[id, x, y, flags], ...] }
+  SNAPSHOT: 'snap',        // { p: [[id, x, y, flags], ...] }  only players you can see
   SELF: 'self',            // private: role, desk, tasks, cooldowns
   EVENT: 'event',          // { kind, ... } feed items
   MEETING: 'meeting',      // meeting state (who voted is public, for whom is not until the end)
-  CHAT: 'chat',            // { from, text, at }
-  TERMINAL: 'term',        // { open, backlog?, line?, reason? }  desk terminal chat room
+  CHAT: 'chat',            // { line } or { backlog }, each with channel 'all' | 'general' | 'crew' | 'team'
+  TERMINAL: 'term',        // { open, reason? }  your desk terminal opened/closed (backlogs follow as CHAT)
+  EMOTE: 'emote',          // { playerId, id }  someone you can see emoted
   GAME_OVER: 'over',       // { winner, reason, managementId }
   TOAST: 'toast',          // { text }  private feedback ("Nothing to do here")
   PONG: 'pong',            // { at }

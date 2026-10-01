@@ -5,8 +5,9 @@
  */
 import { drawFloors, drawWalls, drawRoomLabels, drawDecor, drawInteractable, roundRect } from './officeArt.js';
 import { PFLAG } from '../../shared/protocol.js';
-import { COLORS, DESK_RANGE, PLAYER_RADIUS, VISION_RADIUS } from '../../shared/constants.js';
+import { COLORS, DESK_RANGE, PLAYER_RADIUS, PHASE, ROLE } from '../../shared/constants.js';
 import { visibilityPolygon } from '../../shared/vision.js';
+import { EMOTES_BY_ID } from '../../shared/emotes.js';
 
 const SKIN = ['#f3cfae', '#e0ac85', '#c68b62', '#9a6545', '#6f4630'];
 const HAIR = ['#2b1d14', '#5a3a1f', '#9b6b2f', '#d9b25b', '#1a1a1a', '#7b2f1d'];
@@ -32,6 +33,7 @@ export class Renderer {
     this.dpr = 1;
     this.scale = 1;
     this.cam = { x: 0, y: 0 };
+    this.insets = { right: 0, bottom: 0 }; // screen area covered by UI panels
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -42,27 +44,46 @@ export class Renderer {
     this.h = this.canvas.clientHeight || window.innerHeight;
     this.canvas.width = Math.round(this.w * this.dpr);
     this.canvas.height = Math.round(this.h * this.dpr);
+    this.updateScale();
+  }
+
+  /** Centre the view on the part of the screen not covered by a panel (lobby folder). */
+  setInsets(right, bottom) {
+    if (right === this.insets.right && bottom === this.insets.bottom) return;
+    this.insets = { right, bottom };
+    this.updateScale();
+  }
+
+  get viewW() { return Math.max(200, this.w - this.insets.right); }
+  get viewH() { return Math.max(200, this.h - this.insets.bottom); }
+
+  updateScale() {
     // Show roughly 1100 x 760 world units, but never zoom out too far on phones.
-    this.scale = Math.max(0.58, Math.min(1.3, Math.min(this.w / 1100, this.h / 760)));
+    this.scale = Math.max(0.58, Math.min(1.3, Math.min(this.viewW / 1100, this.viewH / 760)));
   }
 
   /** Convert a screen (CSS px) point to world coordinates. */
   screenToWorld(sx, sy) {
     return {
-      x: (sx - this.w / 2) / this.scale + this.cam.x,
-      y: (sy - this.h / 2) / this.scale + this.cam.y,
+      x: (sx - this.viewW / 2) / this.scale + this.cam.x,
+      y: (sy - this.viewH / 2) / this.scale + this.cam.y,
     };
   }
 
   updateCamera(map, target) {
-    const halfW = this.w / 2 / this.scale;
-    const halfH = this.h / 2 / this.scale;
+    const halfW = this.viewW / 2 / this.scale;
+    const halfH = this.viewH / 2 / this.scale;
     // Let the camera drift a little past the map edge so a player standing in a
     // corner is never hidden under the corner HUD (task note, minimap).
-    const marginX = (this.w * 0.25) / this.scale;
-    const marginY = (this.h * 0.3) / this.scale;
-    const clampAxis = (v, half, size, margin) =>
-      (size <= half * 2 ? size / 2 : Math.max(half - margin, Math.min(size - half + margin, v)));
+    // On tall phone screens the HUD covers more, so let the camera keep you centred.
+    const portrait = this.viewH > this.viewW;
+    const marginX = (this.viewW * (portrait ? 0.45 : 0.25)) / this.scale;
+    const marginY = (this.viewH * (portrait ? 0.45 : 0.3)) / this.scale;
+    const clampAxis = (v, half, size, margin) => {
+      const lo = half - margin;
+      const hi = size - half + margin;
+      return lo >= hi ? size / 2 : Math.max(lo, Math.min(hi, v)); // whole map fits: centre it
+    };
     this.cam.x = clampAxis(target.x, halfW, map.width, marginX);
     this.cam.y = clampAxis(target.y, halfH, map.height, marginY);
   }
@@ -82,11 +103,12 @@ export class Renderer {
     ctx.fillRect(0, 0, this.w, this.h);
 
     ctx.save();
-    ctx.translate(this.w / 2, this.h / 2);
+    ctx.translate(this.viewW / 2, this.viewH / 2);
     ctx.scale(this.scale, this.scale);
     ctx.translate(-this.cam.x, -this.cam.y);
 
     drawFloors(ctx, map);
+    this.drawBreakAreas(game, now);
     drawRoomLabels(ctx, map);
     drawDecor(ctx, map);
     this.drawOwnDeskZone(game, now);
@@ -95,8 +117,9 @@ export class Renderer {
     this.drawDeskNameplates(game);
 
     // Fog of war: everything outside your line of sight is dimmed. You still
-    // remember the floor plan, and the server never sends you hidden colleagues.
-    if (game.fogged) this.drawFog(game.map, game.local);
+    // remember the floor plan; walls, task highlights and the colleagues the
+    // server says you can see are drawn on top.
+    if (game.fogged) this.drawFog(map, game.local, game.settings.sightRange);
 
     drawWalls(ctx, map);
     this.drawTaskHighlights(game, now, frame.usable);
@@ -105,12 +128,18 @@ export class Renderer {
     positions.sort((a, b) => a.y - b.y);
     const reportable = new Map(game.reportableTargets().map((t) => [t.id, t]));
     for (const p of positions) this.drawPlayer(game, p, now, reportable.get(p.id));
+    for (const p of positions) this.drawEmote(game, p, now);
 
+    this.drawDeskCheckGuide(game, now);
     ctx.restore();
   }
 
-  /** Darken the screen, then cut the visibility polygon out with a soft edge. */
-  drawFog(map, eye) {
+  /**
+   * Darken the screen, then cut out what you can see: a polygon cast against the
+   * walls, out to your sight range, with a soft edge. Cosmetic only: the server
+   * doesn't send players you can't see, so nothing is hidden under here.
+   */
+  drawFog(map, eye, range) {
     const { canvas, ctx } = this;
     if (!this.fog) this.fog = document.createElement('canvas');
     const fog = this.fog;
@@ -127,12 +156,12 @@ export class Renderer {
 
     // Same world transform as the main canvas.
     const k = this.dpr * this.scale;
-    f.setTransform(k, 0, 0, k, this.dpr * (this.w / 2 - this.cam.x * this.scale), this.dpr * (this.h / 2 - this.cam.y * this.scale));
+    f.setTransform(k, 0, 0, k, this.dpr * (this.viewW / 2 - this.cam.x * this.scale), this.dpr * (this.viewH / 2 - this.cam.y * this.scale));
     f.globalCompositeOperation = 'destination-out';
-    const poly = visibilityPolygon(map, eye.x, eye.y, VISION_RADIUS);
-    const glow = f.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, VISION_RADIUS);
+    const poly = visibilityPolygon(map, eye.x, eye.y, range);
+    const glow = f.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, range);
     glow.addColorStop(0, 'rgba(0,0,0,1)');
-    glow.addColorStop(0.72, 'rgba(0,0,0,1)');
+    glow.addColorStop(0.75, 'rgba(0,0,0,1)');
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     f.fillStyle = glow;
     f.beginPath();
@@ -146,16 +175,93 @@ export class Renderer {
     ctx.restore();
   }
 
+  /** A speech bubble with an emote above someone who just reacted. */
+  drawEmote(game, p, now) {
+    const e = game.emotes.get(p.id);
+    if (!e || now > e.until) return;
+    const glyph = EMOTES_BY_ID.get(e.id)?.glyph;
+    if (!glyph) return;
+    const ctx = this.ctx;
+    const left = e.until - now;
+    const pop = Math.min(1, (2600 - left) / 140);        // quick pop-in
+    const fade = Math.min(1, left / 300);                 // fade out at the end
+    const badge = p.id !== game.selfId && game.teamRoleOf(p.id) ? 16 : 0; // clear the teammate badge
+    const x = p.x, y = p.y - PLAYER_RADIUS - 46 - badge - (1 - pop) * 6;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    roundRect(ctx, x - 18, y - 17, 36, 30, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#1d2742';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - 5, y + 13); ctx.lineTo(x, y + 20); ctx.lineTo(x + 5, y + 13);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.font = '18px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1d2742';
+    ctx.fillText(glyph, x, y - 1);
+    ctx.restore();
+  }
+
+  /** During a desk check: an arrow from you toward your desk. */
+  drawDeskCheckGuide(game, now) {
+    if (game.deskCheckLeft(now) == null || !game.inOffice || game.isManagement) return;
+    const desk = game.self?.deskId && game.map.desksById.get(game.self.deskId);
+    if (!desk) return;
+    const { x, y } = game.local;
+    const dx = desk.seat.x - x;
+    const dy = desk.seat.y - y;
+    const d = Math.hypot(dx, dy);
+    if (d <= DESK_RANGE) return;
+    const ux = dx / d, uy = dy / d;
+    const ctx = this.ctx;
+    const bob = Math.sin(now / 140) * 4;
+    const ax = x + ux * (44 + bob), ay = y + uy * (44 + bob);
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(Math.atan2(uy, ux));
+    ctx.beginPath();
+    ctx.moveTo(14, 0); ctx.lineTo(-8, -11); ctx.lineTo(-3, 0); ctx.lineTo(-8, 11); ctx.closePath();
+    ctx.fillStyle = '#cf3b31';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.5;
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** During a break, tint the places where you're safe from reports. */
+  drawBreakAreas(game, now) {
+    if (game.phase !== PHASE.PLAYING || !game.breakInfo(now).current) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = `rgba(84, 201, 133, ${0.16 + 0.05 * Math.sin(now / 400)})`;
+    ctx.strokeStyle = 'rgba(45, 138, 84, 0.7)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([14, 10]);
+    for (const r of game.map.rooms) {
+      if (!r.breakArea) continue;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeRect(r.x + 8, r.y + 8, r.w - 16, r.h - 16);
+    }
+    ctx.restore();
+  }
+
   drawOwnDeskZone(game, now) {
     const desk = game.self?.deskId && game.map.desksById.get(game.self.deskId);
     if (!desk || !game.local) return;
     const ctx = this.ctx;
+    const alarm = game.deskCheckLeft(now) != null && !game.isManagement;
     ctx.save();
     ctx.setLineDash([8, 6]);
-    ctx.lineDashOffset = -now / 60;
-    ctx.strokeStyle = 'rgba(45, 138, 84, 0.9)';
-    ctx.fillStyle = 'rgba(45, 138, 84, 0.12)';
-    ctx.lineWidth = 2.5;
+    ctx.lineDashOffset = -now / (alarm ? 25 : 60);
+    ctx.strokeStyle = alarm ? '#cf3b31' : 'rgba(45, 138, 84, 0.9)';
+    ctx.fillStyle = alarm ? `rgba(207, 59, 49, ${0.12 + 0.1 * Math.sin(now / 120)})` : 'rgba(45, 138, 84, 0.12)';
+    ctx.lineWidth = alarm ? 4 : 2.5;
     ctx.beginPath();
     ctx.arc(desk.seat.x, desk.seat.y, DESK_RANGE, 0, Math.PI * 2);
     ctx.fill();
@@ -173,6 +279,7 @@ export class Renderer {
     for (const d of game.map.desks) {
       const owner = owners.get(d.id);
       if (!owner) continue;
+      if (game.entities.get(owner.id)?.flags & PFLAG.AT_DESK) continue; // their name tag says it already
       const label = owner.name;
       const tw = ctx.measureText(label).width + 12;
       const x = d.x + d.w / 2;
@@ -282,6 +389,21 @@ export class Renderer {
         const lift = Math.sin(now / 150 + i) > 0.3 ? -1.5 : 0;
         ctx.beginPath(); ctx.arc(bx + 5 + i * 7, by - 1 + lift, 2, 0, Math.PI * 2); ctx.fill();
       }
+    }
+
+    // Teammate badge (only Management and snitches see these, about each other)
+    const teamRole = isSelf ? null : game.teamRoleOf(p.id);
+    if (teamRole) {
+      const label = teamRole === ROLE.MANAGEMENT ? 'Management' : 'Snitch';
+      ctx.font = '700 10px "Atkinson Hyperlegible", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const bw = ctx.measureText(label).width + 10;
+      roundRect(ctx, p.x - bw / 2, p.y - r - 38, bw, 14, 4);
+      ctx.fillStyle = '#cf3b31';
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, p.x, p.y - r - 30.5);
     }
 
     // Name tag

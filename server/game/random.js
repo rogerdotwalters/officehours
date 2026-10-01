@@ -31,3 +31,20 @@ export function randomCode(length, alphabet) {
   for (let i = 0; i < length; i++) out += alphabet[randomInt(alphabet.length)];
   return out;
 }
+
+/**
+ * Pick one item at random, weighted by `weightOf(item)` (any non-negative number).
+ * Returns null if every weight is zero.
+ */
+export function pickWeighted(items, weightOf) {
+  // Scale to integers so the crypto RNG can be used without float bias.
+  const weights = items.map((it) => Math.max(0, Math.round((Number(weightOf(it)) || 0) * 100)));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 0) return null;
+  let roll = randomInt(total);
+  for (let i = 0; i < items.length; i++) {
+    if (roll < weights[i]) return items[i];
+    roll -= weights[i];
+  }
+  return items[items.length - 1];
+}

@@ -1,29 +1,39 @@
 /**
  * RoleSystem — secret role assignment, desk assignment, and report validation.
- * Roles live only on the server; each client is told its own role and nothing else.
+ *
+ * Roles: one Management, N snitches (lobby setting, secretly on Management's
+ * side), everyone else a worker. Roles live only on the server; each client is
+ * told its own role, and team members (Management + snitches) are told each other.
  */
-import { ROLE, DESK_RANGE, REPORT_RANGE, REPORT_COOLDOWN_MS, REPORT_INITIAL_COOLDOWN_MS } from '../../shared/constants.js';
+import { ROLE, DESK_RANGE, REPORT_INITIAL_COOLDOWN_MS, DESK_CHECK_INITIAL_DELAY_MS } from '../../shared/constants.js';
+import { effectiveSnitches } from '../../shared/settings.js';
 import { hasLineOfSight } from '../../shared/vision.js';
-import { randomInt, shuffle } from './random.js';
+import { shuffle } from './random.js';
 
 export class RoleSystem {
   constructor(map) {
     this.map = map;
   }
 
-  /** Pick one Management player at random, give everyone a random desk. */
-  assign(players, now) {
-    const list = [...players];
-    const managementIndex = randomInt(list.length);
+  /**
+   * Shuffle players, make the first Management and the next few snitches, and
+   * give everyone a random desk. `dayStartAt` is when the start freeze ends.
+   */
+  assign(players, settings, dayStartAt) {
+    const list = shuffle(players);
+    const snitchCount = effectiveSnitches(settings, list.length);
     const desks = shuffle(this.map.desks);
 
     list.forEach((p, i) => {
-      p.role = i === managementIndex ? ROLE.MANAGEMENT : ROLE.WORKER;
+      p.role = i === 0 ? ROLE.MANAGEMENT : i <= snitchCount ? ROLE.SNITCH : ROLE.WORKER;
       p.deskId = desks[i].id;
-      p.reportReadyAt = p.isManagement ? now + REPORT_INITIAL_COOLDOWN_MS : 0;
+      p.reportReadyAt = p.isManagement ? dayStartAt + REPORT_INITIAL_COOLDOWN_MS : 0;
+      p.deskCheckReadyAt = p.isManagement
+        ? dayStartAt + Math.min(DESK_CHECK_INITIAL_DELAY_MS, settings.deskCheckCooldown * 1000)
+        : 0;
       p.selfDirty = true;
     });
-    return list[managementIndex];
+    return { management: list[0], snitches: list.slice(1, 1 + snitchCount) };
   }
 
   seatOf(player) {
@@ -39,11 +49,11 @@ export class RoleSystem {
   /**
    * Validate a Management report. Every rule is checked here, never on the client:
    *  - reporter really is Management, is still in the office, cooldown elapsed
-   *  - target exists, is an active worker, is NOT at their own desk
-   *  - target is within REPORT_RANGE and in line of sight (Management must actually catch them)
+   *  - target exists, is still in the office, is NOT at their own desk
+   *  - target is within the match's report range and in line of sight (Management must actually catch them)
    *  - the wifi is up (no reports can be filed during an outage)
    */
-  validateReport(reporter, target, now, { wifiDown = false } = {}) {
+  validateReport(reporter, target, now, range, { wifiDown = false } = {}) {
     if (!reporter.isManagement) return { ok: false, reason: 'Only Management can report.' };
     if (!reporter.isActive) return { ok: false, reason: "You're not in the office." };
     if (wifiDown) return { ok: false, reason: "The wifi is down. HR can't file anything right now." };
@@ -51,13 +61,13 @@ export class RoleSystem {
     if (!target || target.id === reporter.id) return { ok: false, reason: 'Invalid target.' };
     if (!target.isActive) return { ok: false, reason: "They're not in the office." };
     if (this.isAtDesk(target)) return { ok: false, reason: "They're at their desk." };
-    if (Math.hypot(reporter.x - target.x, reporter.y - target.y) > REPORT_RANGE) return { ok: false, reason: 'Get closer first.' };
+    if (Math.hypot(reporter.x - target.x, reporter.y - target.y) > range) return { ok: false, reason: 'Get closer first.' };
     if (!hasLineOfSight(this.map, reporter.x, reporter.y, target.x, target.y)) return { ok: false, reason: "You can't see them from here." };
     return { ok: true };
   }
 
-  consumeReport(reporter, now) {
-    reporter.reportReadyAt = now + REPORT_COOLDOWN_MS;
+  consumeReport(reporter, now, cooldownSeconds) {
+    reporter.reportReadyAt = now + cooldownSeconds * 1000;
     reporter.selfDirty = true;
   }
 }

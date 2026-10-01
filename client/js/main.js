@@ -8,16 +8,24 @@ import { Input } from './input/Input.js';
 import { Renderer } from './render/Renderer.js';
 import { Minimap } from './render/Minimap.js';
 import { UI } from './ui/UI.js';
-import { C2S, S2C } from '../shared/protocol.js';
-import { PHASE, INTERACT_RANGE, ROOM_CODE_LENGTH } from '../shared/constants.js';
+import { TaskWindow } from './minigames/TaskWindow.js';
+import { C2S, S2C, PFLAG } from '../shared/protocol.js';
+import { PHASE, INTERACT_RANGE, ROOM_CODE_LENGTH, ROLE } from '../shared/constants.js';
 import { distPointRect } from '../shared/mapBuilder.js';
+import { TASKS_BY_ID } from '../shared/tasks.js';
+import { EMOTES } from '../shared/emotes.js';
 
 const net = new Network();
 const game = new ClientGame();
 const canvas = document.getElementById('game-canvas');
 const renderer = new Renderer(canvas);
 const minimap = new Minimap(document.getElementById('hud-minimap'));
-let chatLines = [];
+const lobbyPanel = document.getElementById('lobby-panel');
+const taskWindow = new TaskWindow({
+  onSubmit: (answer) => net.send(C2S.MINIGAME, { answer }),
+  onClose: () => { net.send(C2S.CANCEL); taskWindow.close(); },
+});
+const chat = { all: [], general: [], team: [], crew: [] };
 let awaitingRoleReveal = false;
 let screen = 'menu';
 
@@ -46,10 +54,14 @@ const ui = new UI({
   onReady: () => net.send(C2S.READY, { ready: !game.me?.ready }),
   onStart: () => net.send(C2S.START),
   onLeave: () => leaveRoom(),
-  onChat: (text) => net.send(C2S.CHAT, { text }),
+  onSettings: (settings) => net.send(C2S.SETTINGS, { settings }),
+  onChat: (text, channel) => net.send(C2S.CHAT, { text, channel }),
   onVote: (targetId) => net.send(C2S.VOTE, { targetId }),
+  onUse: () => interact(),
   onReport: () => report(),
+  onDeskCheck: () => deskCheck(),
   onTerminal: (open) => toggleTerminal(open),
+  onEmote: (id) => emote(id),
   onReturnToLobby: () => net.send(C2S.RETURN_TO_LOBBY),
   async onCopyCode() {
     const url = `${location.origin}${location.pathname}?room=${game.room?.code}`;
@@ -75,9 +87,9 @@ function enterRoom(code, name) {
 }
 
 function leaveRoom(errorText = '') {
+  taskWindow.close();
   net.leave();
   game.reset();
-  ui.renderTerminal(game);
   game.room = null;
   game.selfId = null;
   history.replaceState(null, '', location.pathname);
@@ -87,9 +99,10 @@ function leaveRoom(errorText = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Player actions (input callbacks)
+// Player actions
 // ---------------------------------------------------------------------------
 function interact() {
+  if (game.inLobby) return;
   if (!game.inOffice) return game.cycleSpectate();
   const usable = game.nearestUsable();
   if (!usable) return ui.toast('Nothing to use here.', 1200);
@@ -105,25 +118,44 @@ function report(targetId) {
   net.send(C2S.REPORT, { targetId: id });
 }
 
-/** Open/close the desk terminal. The server decides; this just pre-checks for a quick hint. */
-function toggleTerminal(open = !game.terminal.open) {
+function deskCheck() {
+  if (!game.isManagement || !game.inOffice) return;
+  net.send(C2S.DESK_CHECK);
+}
+
+/** Open/close your desk terminal. The server decides; this just pre-checks for a quick hint. */
+function toggleTerminal(open = !game.terminal.open, channel) {
   if (!open) {
     game.terminal.open = false;
     ui.renderTerminal(game);
     return net.send(C2S.TERMINAL, { open: false });
   }
   if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
-  if (!game.atOwnDesk) return ui.toast('Your terminal is at your desk.', 1500);
+  if (!game.atOwnDesk) return ui.toast('Your terminal is at your desk. Out here you can only emote (1-8).', 1800);
   if (game.wifiDown) return ui.toast('No wifi. Your terminal is offline.', 1500);
+  if (channel) ui.terminalChannel = channel;
   net.send(C2S.TERMINAL, { open: true });
+}
+
+function emote(id) {
+  if (!id || !(game.inLobby || (game.inOffice && game.phase === PHASE.PLAYING))) return;
+  net.send(C2S.EMOTE, { id });
 }
 
 const input = new Input(canvas, {
   onInteract: interact,
   onReport: () => report(),
-  onTerminal: () => toggleTerminal(),
+  onDeskCheck: deskCheck,
+  // T opens/closes your desk terminal; B opens it straight on the back office (Management + snitches).
+  onChatKey(which) {
+    if (game.inLobby || !game.role) return;
+    if (which === 'team') return game.isTeam && toggleTerminal(true, 'team');
+    toggleTerminal();
+  },
+  onEmote: (index) => emote(EMOTES[index]?.id),
   onCancel: () => net.send(C2S.CANCEL),
   onClick(sx, sy) {
+    if (game.inLobby) return;
     const w = renderer.screenToWorld(sx, sy);
     const pid = game.playerAt(w.x, w.y);
     if (pid && pid !== game.selfId && game.isManagement) return report(pid);
@@ -143,29 +175,35 @@ net.on(S2C.WELCOME, (msg) => {
 });
 
 net.on(S2C.ROOM, (room) => {
-  const prev = game.phase;
+  const prev = game.room ? game.phase : null;
   game.applyRoom(room, performance.now());
-  if (room.phase === PHASE.LOBBY) {
-    if (prev !== PHASE.LOBBY) { game.reset(); ui.renderTerminal(game); }
-    ui.hideGameOver();
-    show('lobby');
-  } else if (screen !== 'game') {
-    show('game');
+  if (room.phase === PHASE.LOBBY && prev !== PHASE.LOBBY) {
+    game.reset();
+    ui.hideOverlays();
+    chat.general = [];
+    chat.team = [];
+    chat.crew = [];
   }
-  ui.renderLobby(game);
-  ui.renderChat(chatLines, game);
+  if (screen !== 'game') show('game');
+  ui.renderLobby(game, performance.now());
+  ui.renderChat('all', chat.all, game);
 });
 
 net.on(S2C.GAME_START, () => {
   game.reset();
-  ui.renderTerminal(game);
-  chatLines = [];
+  chat.all = [];
+  chat.general = [];
+  chat.team = [];
+  chat.crew = [];
+  ui.resetMatchUi();
+  for (const ch of ['general', 'team', 'crew']) ui.renderChat(ch, chat[ch], game);
   awaitingRoleReveal = true;
   show('game');
 });
 
 net.on(S2C.SELF, (self) => {
   game.applySelf(self, performance.now());
+  taskWindow.sync(self.status === 'active' ? self : null);
   if (awaitingRoleReveal) {
     awaitingRoleReveal = false;
     ui.showRoleReveal(game, self.freezeMs);
@@ -178,49 +216,65 @@ net.on(S2C.MEETING, (m) => {
   game.meeting = m.stage === 'closed' ? null : { ...m, receivedAt: performance.now() };
 });
 
-net.on(S2C.CHAT, (msg) => {
-  if (msg.backlog) chatLines = msg.backlog;
-  if (msg.line) chatLines.push(msg.line);
-  if (chatLines.length > 60) chatLines = chatLines.slice(-60);
-  ui.renderChat(chatLines, game);
-});
-
 const TERMINAL_CLOSED = {
   left_desk: 'You left your desk. Terminal closed.',
   wifi: 'The wifi went down. Your terminal is offline.',
 };
 
 net.on(S2C.TERMINAL, (msg) => {
-  const t = game.terminal;
-  if (!msg.open) {
-    t.open = false;
-    if (TERMINAL_CLOSED[msg.reason]) ui.toast(TERMINAL_CLOSED[msg.reason], 2000);
-  } else {
-    t.open = true;
-    if (msg.backlog) t.lines = msg.backlog;
-    if (msg.line) t.lines.push(msg.line);
-    if (t.lines.length > 60) t.lines = t.lines.slice(-60);
-  }
+  game.terminal.open = !!msg.open;
+  if (!msg.open && TERMINAL_CLOSED[msg.reason]) ui.toast(TERMINAL_CLOSED[msg.reason], 2000);
   ui.renderTerminal(game);
+});
+
+net.on(S2C.EMOTE, (msg) => game.applyEmote(msg.playerId, msg.id, performance.now()));
+
+net.on(S2C.CHAT, (msg) => {
+  const channel = ['general', 'team', 'crew'].includes(msg.channel) ? msg.channel : 'all';
+  if (msg.backlog) chat[channel] = msg.backlog;
+  if (msg.line) {
+    chat[channel].push(msg.line);
+    if (msg.line.from !== game.selfId) ui.noteUnread(channel, game);
+  }
+  if (chat[channel].length > 60) chat[channel] = chat[channel].slice(-60);
+  ui.renderChat(channel, chat[channel], game);
 });
 
 net.on(S2C.EVENT, (e) => {
   const you = e.playerId === game.selfId;
   const who = you ? 'You' : e.name;
   switch (e.kind) {
+    case 'new_task': {
+      const def = TASKS_BY_ID.get(e.taskId);
+      return ui.feed(`${e.last ? 'Last task of the day' : 'New task'}: ${def?.label ?? 'something'}.`);
+    }
     case 'reported': return ui.feed(`${who} got caught in the ${e.where === 'Hallway' ? 'hallway' : e.where} and sent home.`, 'bad');
     case 'went_home': return ui.feed(`${who} clocked out for the day.`, 'good');
     case 'meeting': return ui.feed(`${who} called an all-hands meeting.`);
-    case 'ejected': return ui.feed(`${who} ${you ? 'were' : 'was'} voted out.`, 'bad');
+    case 'desk_check':
+      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+      return ui.feed(`Desk check! Everyone has ${e.seconds} seconds to get to their desk.`, 'bad');
+    case 'desk_check_done': {
+      const names = e.caught.map((c) => (c.id === game.selfId ? 'you' : c.name));
+      return ui.feed(names.length ? `Desk check over. Sent home: ${names.join(', ')}.` : 'Desk check over. Everyone was at their desk.', names.length ? 'bad' : 'good');
+    }
+    case 'ejected': {
+      const what = e.role === ROLE.MANAGEMENT ? 'Management' : e.role === ROLE.SNITCH ? 'a snitch' : 'a worker';
+      return ui.feed(`${who} ${you ? 'were' : 'was'} voted out. ${you ? 'You were' : 'They were'} ${what}.`, 'bad');
+    }
     case 'left': return ui.feed(`${e.name} left the building.`);
-    case 'wifi_down': return ui.feed(`Someone flipped the breaker. The wifi is down for ${Math.round(e.ms / 1000)}s, so nobody can be sent home. Go socialise!`, 'good');
+    case 'break_start': return ui.feed(`${e.label} time. You're safe in the Break Room and outside.`, 'good');
+    case 'break_end': return ui.feed(`${e.label} is over. Back to work.`);
+    case 'wifi_down': return ui.feed(`Someone flipped the breaker. The wifi is down for ${Math.round(e.ms / 1000)}s: nobody can be sent home. Go socialise!`, 'good');
     case 'wifi_up': return ui.feed(e.why === 'breaker' ? 'Someone switched the power back on. Wifi is up.' : 'The wifi is back. Management is watching again.', 'bad');
+    case 'desk_check_cancelled': return ui.feed('The wifi went down mid desk check. It\u2019s called off.', 'good');
   }
 });
 
 net.on(S2C.GAME_OVER, (result) => {
   game.meeting = null;
   ui.renderMeeting(game, performance.now());
+  taskWindow.close();
   ui.showGameOver(result, game);
 });
 
@@ -231,7 +285,7 @@ net.on(S2C.ERROR, (err) => {
   else ui.toast(err.message);
 });
 
-net.on('reconnecting', () => ui.toast('Connection dropped. Reconnecting…', 3000));
+net.on('reconnecting', () => ui.toast('Connection dropped. Reconnecting\u2026', 3000));
 net.on('disconnected', (e) => {
   if (e.code === 4001) return leaveRoom('You opened this room in another tab.');
   if (e.code === 4404) return leaveRoom('No room with that code.');
@@ -244,13 +298,14 @@ net.on('disconnected', (e) => {
 let lastFrame = performance.now();
 let sentDir = { dx: 0, dy: 0 };
 let lastInputSent = 0;
+let lastLobbyRender = 0;
 
 function frame() {
   const now = performance.now();
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
 
-  input.enabled = screen === 'game' && game.phase === PHASE.PLAYING;
+  input.enabled = screen === 'game' && (game.phase === PHASE.PLAYING || game.phase === PHASE.LOBBY) && !taskWindow.isOpen;
   const dir = game.canMove(now) ? input.direction() : { dx: 0, dy: 0 };
 
   // Send movement intent when it changes, plus a slow heartbeat while moving.
@@ -261,17 +316,42 @@ function frame() {
     lastInputSent = now;
   }
 
-  if (screen === 'game') {
+  if (screen === 'game' && game.room) {
+    // In the lobby, keep the waiting room centred in the space beside/above the folder.
+    let insetR = 0, insetB = 0;
+    if (game.inLobby) {
+      const r = lobbyPanel.getBoundingClientRect();
+      if (r.width) {
+        if (r.left > window.innerWidth * 0.3) insetR = Math.round(window.innerWidth - r.left);
+        else insetB = Math.round(window.innerHeight - r.top);
+      }
+    }
+    renderer.setInsets(insetR, insetB);
     game.update(dt, dir, now);
     const usable = game.phase === PHASE.PLAYING ? game.nearestUsable() : null;
+    const atDesk = !!(game.entities.get(game.selfId)?.flags & PFLAG.AT_DESK);
     renderer.render(game, now, { usable });
-    minimap.render(game, now);
-    ui.renderHud(game, now, { usable });
-    ui.renderMeeting(game, now);
+    if (!game.inLobby) {
+      minimap.render(game, now);
+      ui.renderHud(game, now, { usable, atDesk });
+      ui.renderMeeting(game, now);
+    } else if (now - lastLobbyRender > 500) {
+      // Pending setting edits expire on a timer, so refresh the steppers now and then.
+      lastLobbyRender = now;
+      ui.renderSettings(game, now);
+    }
   }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------------------
+// Test rooms and test tools. To remove: delete the client/js/dev/ folder and
+// every line tagged SANDBOX (see README, "Test rooms").
+// ---------------------------------------------------------------------------
+import('./dev/sandbox.js') // SANDBOX
+  .then((m) => m.install({ net, game, ui, enterRoom, leaveRoom })) // SANDBOX
+  .catch((err) => console.warn('Test tools unavailable', err)); // SANDBOX
 
 // ---------------------------------------------------------------------------
 // Boot: ?room=CODE in the URL pre-fills the join form, and rejoins automatically

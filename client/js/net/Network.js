@@ -51,9 +51,16 @@ export class Network {
   }
 
   // ---- Lifecycle -----------------------------------------------------------
-  async createRoom() {
-    const res = await fetch(`${this.httpBase}/api/rooms`, { method: 'POST' });
-    if (!res.ok) throw new Error('The server could not create a room. Try again in a moment.');
+  async createRoom({ sandbox = false, testCode } = {}) {
+    const res = await fetch(`${this.httpBase}/api/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sandbox, testCode }), // sandbox: true asks for a test room (testCode unlocks it)
+    });
+    if (!res.ok) {
+      const reason = await res.json().catch(() => ({}));
+      throw new Error(reason.error || 'The server could not create a room. Try again in a moment.');
+    }
     const { code } = await res.json();
     return code;
   }

@@ -85,6 +85,7 @@
             <p>Tasks arrive one at a time as the workday goes on. Finish them all, then clock out at the time clock in the Lobby. If enough workers clock out before five o'clock, workers win.</p>
             <p>Management sends people home by catching them away from their desks, or by calling a desk check: when the countdown ends, anyone not at their own desk goes home.</p>
             <p>During the day, workers can talk in the <strong>water cooler</strong> chat and Management in the <strong>back office</strong>. Snitches work like everyone else but sit in both chats, passing on what they hear, and win with Management.</p>
+            <p>The day has breaks. On a break you can't be reported in the Break Room or anywhere outside, Management can't call desk checks, and lunch tasks can finally be done.</p>
             <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
           </details>
         </section>
@@ -110,7 +111,10 @@
       <div class="hud-top">
         <div id="hud-clock" class="punchclock" hidden>
           <span class="punchclock__time"></span>
-          <span class="punchclock__track" aria-hidden="true"></span>
+          <span class="punchclock__trackwrap" aria-hidden="true">
+            <span class="punchclock__track"></span>
+            <span class="punchclock__breaks"></span>
+          </span>
           <span class="punchclock__note"></span>
         </div>
         <div class="hud-top__pills">
@@ -126,6 +130,12 @@
 
       <div id="hud-deskcheck" class="deskcheck" role="alert" hidden>
         <span class="deskcheck__title">Desk check</span>
+        <span class="deskcheck__body"></span>
+        <span class="deskcheck__count"></span>
+      </div>
+
+      <div id="hud-break" class="deskcheck deskcheck--break" role="status" hidden>
+        <span class="deskcheck__title"></span>
         <span class="deskcheck__body"></span>
         <span class="deskcheck__count"></span>
       </div>
@@ -221,6 +231,20 @@
           </form>
         </section>
       </div>
+    </section>
+  </div>
+
+  <!-- Task window: mini-game tasks (client/js/minigames/) -->
+  <div id="overlay-task" class="overlay overlay--task" hidden>
+    <section class="taskwin" role="dialog" aria-modal="true" aria-labelledby="taskwin-title">
+      <header class="taskwin__head">
+        <div>
+          <h2 id="taskwin-title"></h2>
+          <p id="taskwin-sub" class="taskwin__sub"></p>
+        </div>
+        <button id="taskwin-close" class="btn btn--small" type="button">Walk away</button>
+      </header>
+      <div id="taskwin-body" class="taskwin__body"></div>
     </section>
   </div>
 

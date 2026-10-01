@@ -468,3 +468,112 @@ test('chat: water cooler reaches workers and snitches, never Management', () => 
   game.sendFullState(snitch, 1);
   assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['all', 'crew', 'team']);
 });
+
+// ===========================================================================
+// Breaks and task windows
+// ===========================================================================
+import { breakWindows } from '../shared/breaks.js';
+import { generateFridge, checkFridge, placedCells, rotate } from '../shared/minigames/fridge.js';
+
+test('breaks: schedule maps office time onto the workday', () => {
+  const w = breakWindows(3, 8 * 60_000); // 8-minute day: one office hour = one minute
+  assert.deepEqual(w.map((b) => b.id), ['coffee', 'lunch', 'afternoon']);
+  const lunch = w.find((b) => b.id === 'lunch');
+  assert.equal(lunch.startMs, 3 * 60_000);
+  assert.equal(lunch.endMs, 4 * 60_000);
+  assert.deepEqual(breakWindows(0, 1000), []);
+});
+
+test('breaks: safe in break areas, desk checks off, break tasks gated', () => {
+  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0, workdayMinutes: 8, breaks: 1 }); // lunch only
+  const t0 = 1_000_000 + START_FREEZE_MS;
+  const lunchAt = t0 + 3 * 60_000 + 10;
+  const w = workers[0];
+
+  // Before lunch: a break-only task waits for the break.
+  w.tasks = [{ id: 'lunch', done: false }];
+  const table = game.office.getInteractable('lunch_table');
+  w.x = table.x + table.w / 2; w.y = table.y + table.h + 20;
+  game.handleInteract(w, 'lunch_table', t0 + 1000);
+  assert.equal(w.activeTask, null);
+  assert.match(lastToast(outbox, w.id), /break/);
+
+  // Lunch starts: announced to everyone.
+  outbox.length = 0;
+  game.tick(lunchAt);
+  assert.ok(outbox.some((m) => m.t === S2C.EVENT && m.d.kind === 'break_start'));
+  game.handleInteract(w, 'lunch_table', lunchAt + 10);
+  assert.ok(w.activeTask, 'can eat lunch on the lunch break');
+
+  // On break in the break room: can't be reported. In the hallway: fair game.
+  mgmt.x = w.x + 40; mgmt.y = w.y;
+  game.handleReport(mgmt, w.id, lunchAt + 20);
+  assert.equal(w.status, STATUS.ACTIVE);
+  assert.match(lastToast(outbox, mgmt.id), /on break/);
+  const w2 = workers[1];
+  w2.x = 300; w2.y = 520; mgmt.x = 340; mgmt.y = 520;
+  game.handleReport(mgmt, w2.id, lunchAt + 30);
+  assert.equal(w2.status, STATUS.SENT_HOME);
+
+  // No desk checks during lunch.
+  mgmt.deskCheckReadyAt = 0;
+  game.handleDeskCheck(mgmt, lunchAt + 40);
+  assert.equal(game.deskCheck, null);
+});
+
+test('fridge: generated puzzles are solvable; wrong answers rejected', () => {
+  for (let i = 0; i < 200; i++) {
+    const p = generateFridge(Math.random);
+    assert.equal(p.pieces.length, 2);
+    const filled = p.items.reduce((n, it) => n + it.cells.length, 0) + p.pieces.reduce((n, pc) => n + pc.cells.length, 0);
+    assert.ok(filled < p.cols * p.rows, 'there is a decoy gap');
+    // Solve using the stored answer.
+    const placements = p.pieces.map((pc, k) => {
+      const target = [...p.answer[k]].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+      for (let rot = 0; rot < 4; rot++) {
+        const cells = placedCells(pc, rot, target[0][0], target[0][1]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+        if (JSON.stringify(cells) === JSON.stringify(target)) return { piece: k, rot, x: target[0][0], y: target[0][1] };
+      }
+      return null;
+    });
+    assert.ok(checkFridge(p, placements), 'answer fits');
+    assert.equal(checkFridge(p, [placements[0], placements[0]]), false, 'same piece twice');
+    assert.equal(checkFridge(p, [{ ...placements[0], x: -1 }, placements[1]]), false, 'out of the fridge');
+  }
+  assert.deepEqual(rotate([[0, 0], [1, 0]], 1), [[0, 0], [0, 1]]);
+});
+
+test('fridge task: window opens, answer checked by the server', () => {
+  const { game, outbox, workers } = startedGame(4, { snitches: 0 });
+  const w = workers[0];
+  const now = 1_000_000 + START_FREEZE_MS + 10;
+  w.tasks = [{ id: 'fridge', done: false }];
+  const fridge = game.office.getInteractable('fridge');
+  w.x = fridge.x + fridge.w / 2; w.y = fridge.y + fridge.h + 20;
+  game.handleInteract(w, 'fridge', now);
+  assert.equal(w.activeTask?.minigame, 'fridge');
+
+  // The client sees the puzzle but never the answer.
+  game.sendSelf(w, now);
+  const self = [...outbox].reverse().find((m) => m.to === w.id && m.t === S2C.SELF).d;
+  assert.ok(self.active.puzzle.items.length);
+  assert.equal('answer' in self.active.puzzle, false);
+
+  // Waiting doesn't finish it (no timer), a bad answer doesn't either.
+  game.tick(now + 60_000);
+  assert.equal(w.tasks[0].done, false);
+  game.handleMinigame(w, [{ piece: 0, rot: 0, x: 99, y: 99 }, { piece: 1, rot: 0, x: 0, y: 0 }], now + 61_000);
+  assert.equal(w.tasks[0].done, false);
+
+  const p = w.activeTask.puzzle;
+  const answer = p.pieces.map((pc, k) => {
+    const target = [...p.answer[k]].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+    for (let rot = 0; rot < 4; rot++) {
+      const cells = placedCells(pc, rot, target[0][0], target[0][1]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+      if (JSON.stringify(cells) === JSON.stringify(target)) return { piece: k, rot, x: target[0][0], y: target[0][1] };
+    }
+  });
+  game.handleMinigame(w, answer, now + 62_000);
+  assert.equal(w.tasks[0].done, true);
+  assert.equal(w.activeTask, null);
+});

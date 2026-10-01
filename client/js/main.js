@@ -8,6 +8,7 @@ import { Input } from './input/Input.js';
 import { Renderer } from './render/Renderer.js';
 import { Minimap } from './render/Minimap.js';
 import { UI } from './ui/UI.js';
+import { TaskWindow } from './minigames/TaskWindow.js';
 import { C2S, S2C, PFLAG } from '../shared/protocol.js';
 import { PHASE, INTERACT_RANGE, ROOM_CODE_LENGTH, ROLE } from '../shared/constants.js';
 import { distPointRect } from '../shared/mapBuilder.js';
@@ -19,6 +20,10 @@ const canvas = document.getElementById('game-canvas');
 const renderer = new Renderer(canvas);
 const minimap = new Minimap(document.getElementById('hud-minimap'));
 const lobbyPanel = document.getElementById('lobby-panel');
+const taskWindow = new TaskWindow({
+  onSubmit: (answer) => net.send(C2S.MINIGAME, { answer }),
+  onClose: () => { net.send(C2S.CANCEL); taskWindow.close(); },
+});
 const chat = { all: [], team: [], crew: [] };
 let awaitingRoleReveal = false;
 let screen = 'menu';
@@ -79,6 +84,7 @@ function enterRoom(code, name) {
 }
 
 function leaveRoom(errorText = '') {
+  taskWindow.close();
   net.leave();
   game.reset();
   game.room = null;
@@ -173,6 +179,7 @@ net.on(S2C.GAME_START, () => {
 
 net.on(S2C.SELF, (self) => {
   game.applySelf(self, performance.now());
+  taskWindow.sync(self.status === 'active' ? self : null);
   if (awaitingRoleReveal) {
     awaitingRoleReveal = false;
     ui.showRoleReveal(game, self.freezeMs);
@@ -219,12 +226,15 @@ net.on(S2C.EVENT, (e) => {
       return ui.feed(`${who} ${you ? 'were' : 'was'} voted out. ${you ? 'You were' : 'They were'} ${what}.`, 'bad');
     }
     case 'left': return ui.feed(`${e.name} left the building.`);
+    case 'break_start': return ui.feed(`${e.label} time. You're safe in the Break Room and outside.`, 'good');
+    case 'break_end': return ui.feed(`${e.label} is over. Back to work.`);
   }
 });
 
 net.on(S2C.GAME_OVER, (result) => {
   game.meeting = null;
   ui.renderMeeting(game, performance.now());
+  taskWindow.close();
   ui.showGameOver(result, game);
 });
 
@@ -255,7 +265,7 @@ function frame() {
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
 
-  input.enabled = screen === 'game' && (game.phase === PHASE.PLAYING || game.phase === PHASE.LOBBY);
+  input.enabled = screen === 'game' && (game.phase === PHASE.PLAYING || game.phase === PHASE.LOBBY) && !taskWindow.isOpen;
   const dir = game.canMove(now) ? input.direction() : { dx: 0, dy: 0 };
 
   // Send movement intent when it changes, plus a slow heartbeat while moving.

@@ -17,6 +17,7 @@ import { S2C } from '../../shared/protocol.js';
 import { sanitizeSettings, SETTINGS_SPEC } from '../../shared/settings.js';
 import { positionBlocked } from '../../shared/physics.js';
 import { Player } from '../game/Player.js';
+import { TASKS_BY_ID } from '../../shared/tasks.js';
 import { randomId } from '../game/random.js';
 
 const ROLES = new Set([ROLE.WORKER, ROLE.MANAGEMENT, ROLE.SNITCH]);
@@ -175,6 +176,25 @@ const COMMANDS = {
     if (clock < target) shiftClock(game, now, target - clock);
     game.issueDueTasks(now);
     return 'It\u2019s 4:50 PM. 20 seconds until closing time.';
+  },
+  nextBreak(game, _p, _msg, now) {
+    if (game.phase !== PHASE.PLAYING || !game.day) return 'Start a match first.';
+    const clock = game.dayClock(now);
+    const next = game.breaks.find((w) => w.startMs > clock);
+    if (!next) return game.breaks.length ? 'No breaks left today.' : 'Breaks are switched off in the house rules.';
+    shiftClock(game, now, next.startMs - clock + 1);
+    game.issueDueTasks(now);
+    game.updateBreak(now);
+  },
+  giveTask(game, p, { taskId }) {
+    if (!inMatch(game) || !p.isActive) return 'You need to be in the office.';
+    const def = TASKS_BY_ID.get(taskId);
+    if (!def) return 'Unknown task.';
+    const existing = p.tasks.find((t) => t.id === def.id);
+    if (existing) existing.done = false;
+    else p.tasks.push({ id: def.id, done: false });
+    p.selfDirty = true;
+    return `Added: ${def.label}.`;
   },
   finishTasks(game, p) {
     if (!inMatch(game)) return 'Start a match first.';

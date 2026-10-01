@@ -97,3 +97,6 @@ body.is-sandbox::before {
 .sbx-stepper output { min-width: 3.6rem; text-align: center; font: 600 1rem/1 var(--display); }
 .sbx-stepper button { width: 2.3rem; height: 2.3rem; border: 2px solid var(--ink); border-radius: 8px; background: #fff; font: 700 1.2rem/1 var(--display); cursor: pointer; }
 .sbx-stepper button:disabled { opacity: 0.35; }
+
+/* Keep the tab out of the way of task windows. */
+body:has(#overlay-task:not([hidden])) .sbx-tab { display: none; }

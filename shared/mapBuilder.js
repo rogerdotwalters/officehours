@@ -76,6 +76,7 @@ export function buildOfficeMap(def = OFFICE) {
   walls.push({ x: def.width - t, y: 0, w: t, h: def.height });
 
   for (const room of def.rooms) {
+    if (room.open) continue; // outdoor areas have no walls
     const built = buildRoomWalls(room, t);
     walls.push(...built.walls);
     doors.push(...built.doorRects);
@@ -102,8 +103,11 @@ export function buildOfficeMap(def = OFFICE) {
   const byId = new Map(interactables.map((o) => [o.id, o]));
   const desksById = new Map(desks.map((d) => [d.id, d]));
 
+  // The smallest room containing a point wins (rooms can overlap: the building
+  // shell contains everything indoors, the patio sits on the lawn).
+  const roomsBySize = [...def.rooms].sort((a, b) => a.w * a.h - b.w * b.h);
   function roomAt(x, y) {
-    for (const r of def.rooms) if (pointInRect(x, y, r)) return r;
+    for (const r of roomsBySize) if (pointInRect(x, y, r)) return r;
     return null;
   }
 
@@ -125,6 +129,8 @@ export function buildOfficeMap(def = OFFICE) {
     getInteractable: (id) => byId.get(id) || null,
     roomAt,
     roomName: (x, y) => roomAt(x, y)?.name ?? 'Hallway',
+    /** On a break, people here are safe from reports. */
+    inBreakArea: (x, y) => !!roomAt(x, y)?.breakArea,
 
     /** All interactables within INTERACT range of a point, nearest first. */
     interactablesNear(x, y, range) {

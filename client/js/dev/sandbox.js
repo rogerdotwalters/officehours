@@ -12,6 +12,7 @@
 import { C2S, S2C } from '../../shared/protocol.js';
 import { PHASE, ROLE } from '../../shared/constants.js';
 import { SETTINGS_SPEC } from '../../shared/settings.js';
+import { TASKS } from '../../shared/tasks.js';
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -34,14 +35,20 @@ const PLACES = [
   ['desk', 'My desk'],
   ['bell', 'Meeting bell'],
   ['time_clock', 'Time clock'],
-  ['open_a', 'Open Office A'],
-  ['open_b', 'Open Office B'],
+  ['fridge', 'Fridge (puzzle task)'],
+  ['office_a', 'Open Office A'],
+  ['office_b', 'Open Office B'],
+  ['studio', 'Design Studio'],
+  ['accounting', 'Accounting'],
+  ['manager', "Manager's Office"],
   ['conference', 'Conference Room'],
   ['break', 'Break Room'],
   ['restroom', 'Restrooms'],
   ['lobby', 'Lobby'],
-  ['office_1', 'Corner Office'],
   ['mailroom', 'Mail & Copy Room'],
+  ['patio', 'Patio (outside)'],
+  ['lawn', 'Lawn (outside)'],
+  ['parking', 'Parking Lot (outside)'],
 ];
 const QUICK_SETTINGS = ['playerSpeed', 'sightRange', 'reportRange', 'deskCheckWarning'];
 
@@ -118,11 +125,16 @@ export function install(ctx) {
         toggle('Real win rules', sbx.realWins, (v) => send('realWins', { on: v }),
           'Off: the match only ends when you end it. On: normal win conditions apply.')),
 
+      inMatch && section('Try a task',
+        el('p', { class: 'sbx-note' }, 'Hand yourself any task, ready to do.'),
+        taskBlock()),
+
       inMatch && section('Workday',
         buttons([
           ['Next task now', () => send('nextTask')],
           ['Hand out every task', () => send('allTasks')],
           ['Finish my tasks', () => send('finishTasks')],
+          ['Start the next break', () => send('nextBreak')],
           ['Jump to 4:50 PM', () => send('almostFive')],
         ])),
 
@@ -190,6 +202,13 @@ export function install(ctx) {
       PLACES.map(([v, t]) => el('option', { value: v }, t)));
     return el('div', { class: 'sbx-row' }, select,
       el('button', { type: 'button', class: 'sbx-btn', onclick: () => send('teleport', { to: select.value }) }, 'Go'));
+  }
+
+  function taskBlock() {
+    const select = el('select', { class: 'sbx-select', 'aria-label': 'Task' },
+      TASKS.map((t) => el('option', { value: t.id }, `${t.label}${t.minigame ? ' (puzzle)' : ''}`)));
+    return el('div', { class: 'sbx-row' }, select,
+      el('button', { type: 'button', class: 'sbx-btn', onclick: () => send('giveTask', { taskId: select.value }) }, 'Give'));
   }
 
   function dummySayBlock() {

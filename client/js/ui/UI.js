@@ -328,8 +328,10 @@ export class UI {
     setText(roleTag, !self ? '' : mgmt ? 'Management' : game.isSnitch ? 'Snitch' : 'Worker');
     roleTag.classList.toggle('is-mgmt', game.isTeam);
 
-    this.renderTasks(game, day);
-    this.renderClock(game, day);
+    const brk = game.breakInfo(now);
+    this.renderTasks(game, day, brk);
+    this.renderClock(game, day, brk);
+    this.renderBreak(game, brk, playing);
 
     // Top pills
     const cam = game.cameraTarget();
@@ -397,23 +399,28 @@ export class UI {
     this.renderActions(game, now, frame);
   }
 
-  renderTasks(game, day) {
+  renderTasks(game, day, brk) {
     const self = game.self;
     const tasks = self?.tasks ?? [];
     const total = self?.totalTasks ?? 0;
     const activeId = self?.active?.taskId;
     const doneCount = tasks.filter((t) => t.done).length;
     const allDone = game.allTasksDone();
-    const key = JSON.stringify([tasks, activeId, game.role, self?.status, total]);
+    const key = JSON.stringify([tasks, activeId, game.role, self?.status, total, brk.current?.id, brk.next?.id]);
     if (key !== this.keys.tasks) {
       this.keys.tasks = key;
       setText($('hud-task-count'), total ? `${doneCount}/${total}` : '');
       const items = tasks.map((t) => {
         const def = TASKS_BY_ID.get(t.id);
         const rarity = rarityOf(def);
+        const breakOnly = def.during === 'break';
+        const waits = breakOnly && !t.done && !brk.current && brk.next;
         return el('li', { class: [t.done && 'done', t.id === activeId && 'active'].filter(Boolean).join(' ') },
-          el('span', {}, def.label, rarity ? el('em', { class: `rarity rarity--${rarity}` }, rarity) : null,
-            el('small', {}, TARGET_HINT[def.target] ?? '')));
+          el('span', {}, def.label,
+            breakOnly ? el('em', { class: 'rarity rarity--break' }, 'break') : null,
+            rarity ? el('em', { class: `rarity rarity--${rarity}` }, rarity) : null,
+            def.minigame ? el('em', { class: 'rarity rarity--game' }, 'puzzle') : null,
+            el('small', {}, `${TARGET_HINT[def.target] ?? ''}${waits ? `. Wait for ${brk.next.label.toLowerCase()}` : ''}`)));
       });
       if (allDone && !game.isTeam && self.status === STATUS.ACTIVE) {
         items.push(el('li', { class: 'active clockout' }, el('span', {}, 'Clock out', el('small', {}, 'time clock, Lobby'))));
@@ -439,8 +446,22 @@ export class UI {
     setHidden($('hud-next'), !next);
   }
 
+  /** Break banner: what's safe right now and how long is left. */
+  renderBreak(game, brk, playing) {
+    const box = $('hud-break');
+    const show = playing && !!brk.current;
+    setHidden(box, !show);
+    document.body.classList.toggle('is-break', show);
+    if (!show) return;
+    setText(box.querySelector('.deskcheck__title'), brk.current.label);
+    setText(box.querySelector('.deskcheck__body'), game.isManagement
+      ? "Anyone in the Break Room or outside can't be reported. No desk checks."
+      : "You're safe in the Break Room and outside. No desk checks.");
+    setText(box.querySelector('.deskcheck__count'), formatClock(brk.current.endMs - brk.elapsed));
+  }
+
   /** The punch clock: office time plus one segment per task section. */
-  renderClock(game, day) {
+  renderClock(game, day, brk) {
     const box = $('hud-clock');
     setHidden(box, !day);
     if (!day) return;
@@ -458,7 +479,19 @@ export class UI {
       segs[day.section].style.setProperty('--fill', fill);
     }
     setText(box.querySelector('.punchclock__time'), game.officeTime(day.elapsed, day.lengthMs));
+    // Break bands along the track
+    const bands = box.querySelector('.punchclock__breaks');
+    const bandKey = brk.windows.map((w) => w.id).join(',') + day.lengthMs;
+    if (bands.dataset.key !== bandKey) {
+      bands.dataset.key = bandKey;
+      bands.replaceChildren(...brk.windows.map((w) => el('i', {
+        title: w.label,
+        style: `left:${(w.startMs / day.lengthMs) * 100}%;width:${((w.endMs - w.startMs) / day.lengthMs) * 100}%`,
+      })));
+    }
     let note = `${formatClock(day.timeLeft)} left`;
+    if (brk.current) note = `${brk.current.label} now`;
+    else if (brk.next && brk.next.startMs - day.elapsed < 45_000) note = `${brk.next.label} in ${formatClock(brk.next.startMs - day.elapsed)}`;
     if (!day.running && game.phase === PHASE.MEETING) note = 'Paused';
     setText(box.querySelector('.punchclock__note'), note);
     box.classList.toggle('is-late', day.timeLeft < 60_000);
@@ -498,9 +531,14 @@ export class UI {
     if (showDc) {
       const active = game.deskCheckLeft(now) != null;
       const cd = self.deskCheckReadyAt == null ? Infinity : Math.max(0, self.deskCheckReadyAt - now);
-      dc.disabled = active || cd > 0;
+      const brk = game.breakInfo(now);
+      const breakSoon = brk.next && brk.next.startMs - brk.elapsed < game.settings.deskCheckWarning * 1000;
+      dc.disabled = active || cd > 0 || !!brk.current || !!breakSoon;
       setText(dc.querySelector('.act__sub'),
-        active ? 'underway' : cd === Infinity ? 'underway' : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : `${game.settings.deskCheckWarning}s warning`);
+        active || cd === Infinity ? 'underway'
+          : brk.current ? 'not on a break'
+            : breakSoon ? `${brk.next.label.toLowerCase()} soon`
+              : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : `${game.settings.deskCheckWarning}s warning`);
     }
 
     // Private chats: back office (Management + snitches), water cooler (workers + snitches)

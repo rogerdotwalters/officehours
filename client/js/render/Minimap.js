@@ -34,9 +34,14 @@ export class Minimap {
     ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 12;
     for (const r of map.rooms) {
+      if (r.hall) continue;
+      ctx.fillStyle = r.open ? 'rgba(140, 197, 107, 0.35)' : 'rgba(255,255,255,0.28)';
       ctx.fillRect(r.x, r.y, r.w, r.h);
-      ctx.strokeRect(r.x + 6, r.y + 6, r.w - 12, r.h - 12);
+      if (!r.open) ctx.strokeRect(r.x + 6, r.y + 6, r.w - 12, r.h - 12);
     }
+    // Building outline
+    const hall = map.rooms.find((r) => r.hall);
+    if (hall) ctx.strokeRect(hall.x + 6, hall.y + 6, hall.w - 12, hall.h - 12);
 
     // Task spots
     const pulse = 0.6 + 0.4 * Math.sin(now / 250);

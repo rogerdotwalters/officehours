@@ -106,6 +106,7 @@ export class Renderer {
     ctx.translate(-this.cam.x, -this.cam.y);
 
     drawFloors(ctx, map);
+    this.drawBreakAreas(game, now);
     drawRoomLabels(ctx, map);
     drawDecor(ctx, map);
     this.drawOwnDeskZone(game, now);
@@ -172,6 +173,23 @@ export class Renderer {
     ctx.lineWidth = 2.5;
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /** During a break, tint the places where you're safe from reports. */
+  drawBreakAreas(game, now) {
+    if (game.phase !== PHASE.PLAYING || !game.breakInfo(now).current) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = `rgba(84, 201, 133, ${0.16 + 0.05 * Math.sin(now / 400)})`;
+    ctx.strokeStyle = 'rgba(45, 138, 84, 0.7)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([14, 10]);
+    for (const r of game.map.rooms) {
+      if (!r.breakArea) continue;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeRect(r.x + 8, r.y + 8, r.w - 16, r.h - 16);
+    }
     ctx.restore();
   }
 

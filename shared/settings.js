@@ -19,6 +19,12 @@ export const SETTINGS_SPEC = {
     format: (v) => `${v} min`,
     help: 'Split into equal parts, one per task. The clock pauses during all-hands meetings.',
   },
+  breaks: {
+    label: 'Breaks', group: 'Workday',
+    min: 0, max: 3, step: 1, default: 3,
+    format: (v) => ['None', 'Lunch', 'Lunch and afternoon', 'Coffee, lunch, afternoon'][v],
+    help: 'On a break you can\u2019t be reported in the Break Room or outside, and desk checks are off.',
+  },
   playerSpeed: {
     label: 'Walking speed', group: 'Movement and sight',
     min: 120, max: 280, step: 10, default: 190,

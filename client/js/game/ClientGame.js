@@ -19,6 +19,7 @@ import {
 } from '../../shared/constants.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
+import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
 
 const SNAP_DISTANCE = 150;   // further than this from the server = teleport, don't smooth
 const BUFFER_SIZE = 12;
@@ -135,6 +136,20 @@ export class ClientGame {
     };
   }
 
+  /** Break windows for this match (empty in the lobby). */
+  breakWindows() {
+    const d = this.room?.day;
+    return d ? breakWindows(this.settings.breaks ?? 0, d.lengthMs) : [];
+  }
+
+  /** { current, next, windows } for the workday clock right now. */
+  breakInfo(now) {
+    const day = this.dayInfo(now);
+    const windows = this.breakWindows();
+    if (!day) return { current: null, next: null, windows };
+    return { current: breakAt(windows, day.elapsed), next: nextBreak(windows, day.elapsed), windows, elapsed: day.elapsed };
+  }
+
   /** "11:20 AM" style office time for a point in the workday. */
   officeTime(elapsed, lengthMs) {
     const hours = OFFICE_OPEN_HOUR + (OFFICE_CLOSE_HOUR - OFFICE_OPEN_HOUR) * (elapsed / lengthMs);
@@ -246,9 +261,11 @@ export class ClientGame {
   reportableTargets() {
     if (!this.isManagement || !this.local || this.phase !== PHASE.PLAYING) return [];
     const range = this.settings.reportRange;
+    const onBreak = !!this.breakInfo(performance.now()).current;
     const out = [];
     for (const [id, e] of this.entities) {
       if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
+      if (onBreak && this.map.inBreakArea(e.x, e.y)) continue; // safe on break
       const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
       out.push({ id, d, inRange: d <= range });
     }

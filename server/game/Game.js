@@ -24,6 +24,7 @@ import { S2C, PFLAG } from '../../shared/protocol.js';
 import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { LOBBY_ROOM } from '../../shared/lobbyMap.js';
 import { DEFAULT_SETTINGS, sanitizeSettings } from '../../shared/settings.js';
+import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
 import { stepMovement } from '../../shared/physics.js';
 import { Player } from './Player.js';
 import { TaskSystem } from './TaskSystem.js';
@@ -64,6 +65,8 @@ export class Game {
     this.crewChat = [];                      // water cooler: workers + snitches
     this.day = null;                         // workday clock, see dayClock()
     this.deskCheck = null;                   // { endsAt } while a desk check counts down
+    this.breaks = [];                        // break windows for this match (shared/breaks.js)
+    this.breakId = null;                     // the break happening right now, if any
     this.freezeUntil = 0;
     this.meetingAvailableAt = 0;
     this.result = null;
@@ -227,6 +230,8 @@ export class Game {
     };
     this.meetingAvailableAt = this.freezeUntil + MEETING_COOLDOWN_MS;
     this.deskCheck = null;
+    this.breaks = breakWindows(this.match.breaks, this.day.lengthMs);
+    this.breakId = null;
     this.result = null;
     this.chat = [];
     this.teamChat = [];
@@ -314,6 +319,30 @@ export class Game {
     }
   }
 
+  /** The break happening right now, or null. */
+  currentBreak(now) {
+    return this.day ? breakAt(this.breaks, Math.max(0, this.dayClock(now))) : null;
+  }
+
+  /** Why a break-only task can't be done right now, or null if it can. */
+  breakTaskBlocker(now) {
+    if (this.currentBreak(now)) return null;
+    const next = nextBreak(this.breaks, this.dayClock(now));
+    return next ? `Save that for a break. ${next.label} is next.` : null; // no breaks left: do it any time
+  }
+
+  /** Announce breaks starting and ending. */
+  updateBreak(now) {
+    const b = this.currentBreak(now);
+    const id = b?.id ?? null;
+    if (id === this.breakId) return;
+    const ended = this.breaks.find((w) => w.id === this.breakId);
+    this.breakId = id;
+    if (b) this.broadcast(S2C.EVENT, { kind: 'break_start', breakId: b.id, label: b.label });
+    else if (ended) this.broadcast(S2C.EVENT, { kind: 'break_end', breakId: ended.id, label: ended.label });
+    this.roomDirty = true;
+  }
+
   /** Hand out any tasks that became due. */
   issueDueTasks(now) {
     const due = this.tasksDue(now);
@@ -355,7 +384,7 @@ export class Game {
       case 'time_clock':   return this.clockOut(p, now);
       default: {
         this.tasks.cancel(p);
-        const res = this.tasks.start(p, object, now);
+        const res = this.tasks.start(p, object, now, () => this.breakTaskBlocker(now));
         if (!res.ok) this.toast(p, res.reason);
       }
     }
@@ -363,6 +392,27 @@ export class Game {
 
   handleCancel(p) {
     this.tasks.cancel(p);
+  }
+
+  /** The player solved (or tried to solve) their task window. */
+  handleMinigame(p, answer, now) {
+    if (!this.canAct(p, now) || !p.activeTask?.minigame) return;
+    const res = this.tasks.submitMinigame(p, answer);
+    if (!res.ok) return res.reason && this.toast(p, res.reason);
+    this.onTaskFinished(p, res.task);
+  }
+
+  onTaskFinished(p, finished) {
+    const total = this.match.tasks;
+    const allIn = p.tasks.length >= total;
+    const left = p.tasks.filter((t) => !t.done).length;
+    let msg = `Done: ${finished.label}.`;
+    if (allIn && !left) {
+      msg = p.isTeam ? 'All tasks done. Keep blending in.' : 'All tasks done! Clock out at the time clock in the Lobby.';
+    } else if (!left) {
+      msg += ' Next task arrives soon.';
+    }
+    this.toast(p, msg);
   }
 
   clockOut(p, now) {
@@ -390,6 +440,9 @@ export class Game {
     const target = typeof targetId === 'string' ? this.players.get(targetId) : null;
     const check = this.roles.validateReport(p, target, now, this.match.reportRange);
     if (!check.ok) return this.toast(p, check.reason);
+    if (this.currentBreak(now) && this.office.inBreakArea(target.x, target.y)) {
+      return this.toast(p, `${target.name} is on break. Leave them be.`);
+    }
 
     this.roles.consumeReport(p, now, this.match.reportCooldown);
     this.sendHome(target);
@@ -424,6 +477,12 @@ export class Game {
       return this.toast(p, `Desk check is on cooldown (${Math.ceil((p.deskCheckReadyAt - now) / 1000)}s).`);
     }
     const warningMs = this.match.deskCheckWarning * 1000;
+    const brk = this.currentBreak(now);
+    if (brk) return this.toast(p, `No desk checks during ${brk.label.toLowerCase()}.`);
+    const upcoming = nextBreak(this.breaks, this.dayClock(now));
+    if (upcoming && upcoming.startMs < this.dayClock(now) + warningMs) {
+      return this.toast(p, `${upcoming.label} starts before a desk check would finish.`);
+    }
     this.deskCheck = { endsAt: now + warningMs, startedAt: now };
     p.deskCheckReadyAt = Infinity; // set properly when it resolves
     p.selfDirty = true;
@@ -667,20 +726,12 @@ export class Game {
           p.y = next.y;
         }
         const finished = this.tasks.update(p, now);
-        if (finished) {
-          const total = this.match.tasks;
-          const allIn = p.tasks.length >= total;
-          const left = p.tasks.filter((t) => !t.done).length;
-          let msg = `Done: ${finished.label}.`;
-          if (allIn && !left) {
-            msg = p.isTeam ? 'All tasks done. Keep blending in.' : 'All tasks done! Clock out at the time clock in the Lobby.';
-          } else if (!left) {
-            msg += ' Next task arrives soon.';
-          }
-          this.toast(p, msg);
-        }
+        if (finished) this.onTaskFinished(p, finished);
       }
-      if (!frozen) this.issueDueTasks(now);
+      if (!frozen) {
+        this.issueDueTasks(now);
+        this.updateBreak(now);
+      }
       if (this.deskCheck && now >= this.deskCheck.endsAt) this.resolveDeskCheck(now);
       if (this.phase === PHASE.PLAYING) {
         this.checkWin(now);
@@ -697,7 +748,8 @@ export class Game {
     // Private state: send when it changed, or every tick while a task bar is filling.
     if (this.phase !== PHASE.LOBBY) {
       for (const p of this.players.values()) {
-        if (p.connected && (p.selfDirty || p.activeTask)) this.sendSelf(p, now);
+        // (Task windows don't change while open, so they're not re-sent every tick.)
+        if (p.connected && (p.selfDirty || (p.activeTask && !p.activeTask.minigame))) this.sendSelf(p, now);
       }
     }
 

@@ -308,6 +308,8 @@ button { touch-action: manipulation; }
 .rarity { font-style: normal; font-size: 0.7rem; font-weight: 700; margin-left: 0.35rem; padding: 0 0.3rem; border-radius: 4px; vertical-align: 0.1em; }
 .rarity--uncommon { background: #fff5b8; color: #6d5e12; }
 .rarity--rare { background: var(--ink); color: var(--sticky); }
+.rarity--break { background: #d4f2df; color: #1b5a36; }
+.rarity--game { background: #dbe6fb; color: #23468f; }
 
 /* Top centre: punch clock + pills */
 .hud-top {
@@ -334,7 +336,11 @@ button { touch-action: manipulation; }
 .punchclock__time { font-family: var(--display); font-weight: 700; font-size: 1.15rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .punchclock__note { font-size: 0.8rem; color: #c4cada; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .punchclock.is-late .punchclock__note { color: #ffb3ad; font-weight: 700; }
-/* One segment per task: past ones filled, the current one fills up as time passes. */
+/* One segment per task: past ones filled, the current one fills up as time passes.
+   Breaks show as green bands underneath. */
+.punchclock__trackwrap { position: relative; display: grid; gap: 2px; }
+.punchclock__breaks { position: relative; height: 4px; }
+.punchclock__breaks i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: #54c985; }
 .punchclock__track { display: flex; gap: 3px; height: 10px; }
 .punchclock__track i { flex: 1; border-radius: 3px; background: rgb(255 255 255 / 0.18); }
 .punchclock__track i.done { background: var(--sticky); }
@@ -399,7 +405,8 @@ button { touch-action: manipulation; }
   pointer-events: none;
   z-index: 3;
 }
-.deskcheck.is-safe { background: var(--go); border-color: #1b5a36; box-shadow: 0 6px 0 #1b5a36; }
+.deskcheck.is-safe, .deskcheck--break { background: var(--go); border-color: #1b5a36; box-shadow: 0 6px 0 #1b5a36; }
+.deskcheck--break .deskcheck__count { font-size: 1.6rem; }
 .deskcheck__title { grid-area: title; font-family: var(--display); font-weight: 700; font-size: 1.35rem; }
 .deskcheck__body { grid-area: body; font-size: 0.92rem; line-height: 1.3; }
 .deskcheck__count { grid-area: count; font-family: var(--display); font-weight: 700; font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -711,7 +718,8 @@ body.is-touch .overlay--meeting { padding-bottom: calc(96px + var(--safe-b)); }
   .punchclock { grid-template-columns: auto auto; grid-template-areas: 'time note' 'track track'; gap: 0.2rem 0.5rem; padding: 0.3rem 0.6rem 0.45rem; }
   .punchclock__time { grid-area: time; font-size: 1rem; }
   .punchclock__note { grid-area: note; justify-self: end; }
-  .punchclock__track { grid-area: track; width: 150px; height: 8px; }
+  .punchclock__trackwrap { grid-area: track; width: 150px; }
+  .punchclock__track { height: 8px; }
   .hud-pill { font-size: 0.8rem; padding: 0.1rem 0.55rem; }
   .hud-top__pills { justify-content: flex-end; }
   .minimap { width: 112px; height: 78px; }
@@ -811,3 +819,107 @@ body.is-touch .overlay--meeting { padding-bottom: calc(96px + var(--safe-b)); }
   .btn, .act { transition: none; }
   body.is-deskcheck .screen--game::after { animation: none; opacity: 0.8; }
 }
+
+/* ==========================================================================
+   Task window (mini-game tasks) and Fridge Tetris
+   ========================================================================== */
+.overlay--task { z-index: 11; }
+.taskwin {
+  width: min(640px, 100%);
+  background: var(--paper);
+  border-radius: 16px;
+  border-top: 8px solid var(--sticky);
+  padding: 1rem 1.1rem 1.2rem;
+  box-shadow: 0 20px 50px rgb(0 0 0 / 0.45);
+  animation: memo-in 300ms cubic-bezier(.2,.9,.3,1.2);
+}
+.taskwin__head { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; align-items: start; margin-bottom: 0.8rem; }
+.taskwin__head h2 { font-size: 1.5rem; }
+.taskwin__sub { margin: 0.2rem 0 0; color: var(--ink-soft); font-size: 0.92rem; max-width: 46ch; }
+
+.fridge { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: start; }
+.fridge__box {
+  --cell: min(46px, calc((100vw - 4rem) / 6));
+  background: #f4f7fa;
+  border: 3px solid #8f98a5;
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: inset -10px 0 0 #e3e8ee;
+  position: relative;
+}
+.fridge__box::after { /* door handle */
+  content: ''; position: absolute; right: -9px; top: 40px; width: 6px; height: 70px;
+  border-radius: 3px; background: #8f98a5;
+}
+.fridge__freezer { height: 28px; border-bottom: 3px solid #8f98a5; margin: -6px -6px 6px; display: grid; place-items: center; }
+.fridge__freezer span { width: 60px; height: 5px; border-radius: 3px; background: #c4ccd6; }
+.fridge__inside { position: relative; }
+.fridge__grid, .fridge__labels {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 6), var(--cell));
+  grid-template-rows: repeat(var(--rows, 7), var(--cell));
+}
+.fridge__grid { background: repeating-linear-gradient(to bottom, transparent 0 calc(var(--cell) - 2px), #c9d3dd calc(var(--cell) - 2px) var(--cell)); }
+.fridge__labels { position: absolute; inset: 0; pointer-events: none; }
+.fridge__labels span {
+  display: grid; place-items: center; text-align: center;
+  font: 700 0.62rem/1.05 var(--body); color: rgb(29 39 66 / 0.8);
+  padding: 2px; overflow: hidden; overflow-wrap: anywhere;
+}
+.fcell {
+  appearance: none; margin: 0; padding: 0;
+  border: 1px dashed rgb(143 152 165 / 0.35);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fcell.is-food { cursor: default; border: 0 solid rgb(29 39 66 / 0.55); }
+.fcell.is-yours { border: 0 solid #fff; }
+.fcell.e-t { border-top-width: 2px; border-top-style: solid; }
+.fcell.e-r { border-right-width: 2px; border-right-style: solid; }
+.fcell.e-b { border-bottom-width: 2px; border-bottom-style: solid; }
+.fcell.e-l { border-left-width: 2px; border-left-style: solid; }
+.fcell.is-yours { box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.5); }
+.fcell.ghost-ok { box-shadow: inset 0 0 0 3px var(--go); background-color: rgb(45 138 84 / 0.3) !important; }
+.fcell.ghost-bad { box-shadow: inset 0 0 0 3px var(--mgmt); background-color: rgb(207 59 49 / 0.35) !important; }
+
+.fridge__side { display: grid; gap: 0.6rem; align-content: start; }
+.fridge__label { margin: 0; font-family: var(--display); font-weight: 600; }
+.fridge__tray { display: grid; gap: 0.5rem; }
+.fpiece {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.7rem; align-items: center;
+  text-align: left;
+  border: 2px solid var(--ink); border-radius: 10px; background: #fff;
+  padding: 0.45rem 0.6rem; cursor: pointer; min-height: 3.2rem;
+}
+.fpiece.is-selected { box-shadow: 0 0 0 3px var(--sticky), 0 3px 0 var(--ink); }
+.fpiece.is-placed { opacity: 0.55; }
+.fpiece__shape { display: grid; grid-template-columns: repeat(var(--w), 16px); grid-template-rows: repeat(var(--h), 16px); gap: 1px; }
+.fpiece__shape i { border-radius: 2px; }
+.fpiece__shape i.is-anchor { box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px var(--ink); }
+.fpiece__label { font-weight: 700; line-height: 1.2; }
+.fpiece__label small { display: block; font-weight: 400; color: var(--ink-soft); font-size: 0.8rem; }
+.fridge__controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.fridge__rotate kbd { margin: 0 0 0 0.35rem; }
+.fridge__hint { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
+
+@media (max-width: 560px) {
+  .taskwin { padding: 0.8rem; }
+  .taskwin__head h2 { font-size: 1.2rem; }
+  .taskwin__sub { font-size: 0.82rem; }
+  .fridge { grid-template-columns: 1fr; justify-items: center; }
+  .fridge__box { --cell: min(44px, calc((100vw - 3.5rem) / 6)); }
+  .fridge__side { width: 100%; }
+  .fridge__tray { grid-template-columns: 1fr 1fr; }
+  .fpiece { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 0.3rem; }
+  .fridge__controls .btn { flex: 1; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .overlay--task { padding: 0.4rem; }
+  .taskwin { padding: 0.6rem 0.8rem; width: min(760px, 100%); }
+  .taskwin__head { margin-bottom: 0.4rem; }
+  .taskwin__head h2 { font-size: 1.1rem; }
+  .taskwin__sub { display: none; }
+  .fridge__box { --cell: min(36px, calc((100vh - 7.5rem) / 7.6)); }
+}
+@media (prefers-reduced-motion: reduce) { .taskwin { animation: none; } }

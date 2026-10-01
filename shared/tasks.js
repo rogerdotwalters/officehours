@@ -9,6 +9,13 @@
  *
  * A player never gets the same task twice in one match (unless the list runs out).
  *
+ * Optional fields:
+ *   during: 'break'   can only be done on a break (or any time once the day has
+ *                     no breaks left). See shared/breaks.js.
+ *   minigame: 'fridge' instead of holding still, a task window opens with a
+ *                     little puzzle. The server makes the puzzle and checks the
+ *                     answer (shared/minigames/). `duration` is ignored.
+ *
  * To add a task:
  *   1. If it needs a new object, add an interactable with a new `type` in officeMap.js.
  *   2. Add an entry below: { id, label, target, duration (ms), chance }.
@@ -18,29 +25,42 @@
  */
 export const TASKS = [
   // Desk tasks: safe, because you're at your desk.
-  { id: 'emails',      label: 'Answer your emails',              target: 'own_desk',       duration: 5000, chance: 10, desk: true },
-  { id: 'tps',         label: 'File your TPS report',            target: 'own_desk',       duration: 4500, chance: 8,  desk: true },
-  { id: 'spreadsheet', label: 'Update the big spreadsheet',      target: 'own_desk',       duration: 6000, chance: 6,  desk: true },
+  { id: 'emails',      label: 'Answer your emails',               target: 'own_desk',       duration: 5000, chance: 10, desk: true },
+  { id: 'tps',         label: 'File your TPS report',             target: 'own_desk',       duration: 4500, chance: 8,  desk: true },
+  { id: 'spreadsheet', label: 'Update the big spreadsheet',       target: 'own_desk',       duration: 6000, chance: 6,  desk: true },
 
   // Everyday errands away from your desk: this is where Management catches people.
-  { id: 'water',       label: 'Drink from the water cooler',     target: 'water_cooler',   duration: 2500, chance: 10 },
-  { id: 'coffee',      label: 'Refill your coffee',              target: 'coffee_machine', duration: 4000, chance: 10 },
-  { id: 'reheat',      label: 'Reheat your leftovers',           target: 'microwave',      duration: 3500, chance: 7 },
-  { id: 'lunch',       label: 'Eat lunch in the break room',     target: 'lunch_table',    duration: 6000, chance: 6 },
-  { id: 'fridge',      label: 'Label your yogurt in the fridge', target: 'fridge',         duration: 2500, chance: 6 },
-  { id: 'bathroom',    label: 'Use the bathroom',                target: 'toilet',         duration: 5000, chance: 8 },
-  { id: 'wash',        label: 'Wash your hands',                 target: 'sink',           duration: 2000, chance: 8 },
-  { id: 'plant',       label: 'Water the lobby ficus',           target: 'plant',          duration: 2500, chance: 5 },
-  { id: 'print',       label: 'Print the quarterly report',      target: 'printer',        duration: 4000, chance: 8 },
-  { id: 'mail',        label: 'Check your mailbox',              target: 'mailbox',        duration: 2500, chance: 8 },
-  { id: 'supplies',    label: 'Restock printer paper',           target: 'supplies',       duration: 3000, chance: 6 },
-  { id: 'shred',       label: 'Shred confidential documents',    target: 'shredder',       duration: 3500, chance: 6 },
+  { id: 'water',       label: 'Drink from the water cooler',      target: 'water_cooler',   duration: 2500, chance: 9 },
+  { id: 'coffee',      label: 'Refill your coffee',               target: 'coffee_machine', duration: 4000, chance: 9 },
+  { id: 'reheat',      label: 'Reheat your leftovers',            target: 'microwave',      duration: 3500, chance: 6 },
+  { id: 'fridge',      label: 'Put your lunch in the fridge',     target: 'fridge',         duration: 0,    chance: 9, minigame: 'fridge' },
+  { id: 'bathroom',    label: 'Use the bathroom',                 target: 'toilet',         duration: 5000, chance: 7 },
+  { id: 'wash',        label: 'Wash your hands',                  target: 'sink',           duration: 2000, chance: 7 },
+  { id: 'plant',       label: 'Water the lobby ficus',            target: 'plant',          duration: 2500, chance: 5 },
+  { id: 'print',       label: 'Print the quarterly report',       target: 'printer',        duration: 4000, chance: 7 },
+  { id: 'mail',        label: 'Check your mailbox',               target: 'mailbox',        duration: 2500, chance: 7 },
+  { id: 'supplies',    label: 'Restock printer paper',            target: 'supplies',       duration: 3000, chance: 5 },
+  { id: 'shred',       label: 'Shred confidential documents',     target: 'shredder',       duration: 3500, chance: 5 },
+  { id: 'filing',      label: 'File the expense reports',         target: 'filing_cabinet', duration: 4500, chance: 6 },
+  { id: 'sketch',      label: 'Sketch ideas for the new logo',    target: 'easel',          duration: 5000, chance: 5 },
+  { id: 'timesheet',   label: "Drop your timesheet in the manager's inbox", target: 'manager_inbox', duration: 2500, chance: 6 },
+
+  // Break-time tasks: only on a break.
+  { id: 'lunch',       label: 'Eat lunch in the break room',      target: 'lunch_table',    duration: 6000, chance: 7, during: 'break' },
+  { id: 'picnic',      label: 'Eat lunch on the patio',           target: 'picnic_table',   duration: 6000, chance: 6, during: 'break' },
+
+  // Outside.
+  { id: 'planters',    label: 'Water the patio planters',         target: 'planter',        duration: 3500, chance: 6 },
+  { id: 'car',         label: 'Grab your charger from your car',  target: 'car',            duration: 3000, chance: 6 },
+  { id: 'recycling',   label: 'Take out the recycling',           target: 'dumpster',       duration: 4000, chance: 6 },
+  { id: 'cat',         label: 'Feed the office cat',              target: 'cat_bowl',       duration: 3000, chance: 4 },
 
   // Rare ones: long, risky, and memorable.
-  { id: 'gossip',      label: 'Catch up on gossip at the cooler', target: 'water_cooler',  duration: 7000, chance: 3 },
-  { id: 'unjam',       label: 'Unjam the printer',               target: 'printer',        duration: 8000, chance: 3 },
-  { id: 'stapler',     label: 'Borrow a stapler (permanently)',  target: 'supplies',       duration: 2500, chance: 2 },
-  { id: 'nap',         label: 'Sneak a nap in a stall',          target: 'toilet',         duration: 9000, chance: 1 },
+  { id: 'gossip',      label: 'Catch up on gossip at the cooler', target: 'water_cooler',   duration: 7000, chance: 3 },
+  { id: 'unjam',       label: 'Unjam the printer',                target: 'printer',        duration: 8000, chance: 3 },
+  { id: 'candy',       label: "Sneak a mint from the manager's candy bowl", target: 'candy_bowl', duration: 2000, chance: 2 },
+  { id: 'stapler',     label: 'Borrow a stapler (permanently)',   target: 'supplies',       duration: 2500, chance: 2 },
+  { id: 'nap',         label: 'Sneak a nap in a stall',           target: 'toilet',         duration: 9000, chance: 1 },
 ];
 
 export const TASKS_BY_ID = new Map(TASKS.map((t) => [t.id, t]));
@@ -60,6 +80,15 @@ export const TARGET_HINT = {
   mailbox: 'Mail & Copy',
   supplies: 'Mail & Copy',
   shredder: 'Mail & Copy',
+  filing_cabinet: 'Accounting',
+  easel: 'Design Studio',
+  manager_inbox: "Manager's Office",
+  candy_bowl: "Manager's Office",
+  planter: 'Patio, outside',
+  picnic_table: 'Patio, outside',
+  car: 'Parking Lot, outside',
+  dumpster: 'Parking Lot, outside',
+  cat_bowl: 'Lawn, outside',
 };
 
 /** Rarity word shown next to a task in the to-do list. */

@@ -303,15 +303,11 @@ const COMMANDS = {
   },
 
   // ---- Say something as a dummy (to test chats without a second device) ---------
-  // Terminal channels skip the dummy's own desk/wifi checks; your terminal still has to be open.
   dummySay(game, _p, { channel, text }, now) {
     const d = [...game.players.values()].find((o) => o.dummy && o.isActive);
     if (!d) return 'Add a dummy first.';
-    const clean = (typeof text === 'string' ? text.slice(0, CHAT_MAX) : '') || 'Has anyone seen my stapler?';
-    const ch = ['all', 'general', 'team', 'crew'].includes(channel) ? channel : 'general';
-    if (ch === 'all') return game.handleChat(d, clean, 'all', now);
-    if (!game.canRead(d, ch)) return `The dummy can't post in that channel with its role.`;
-    game.postToTerminal(d, ch, clean, now);
+    const clean = typeof text === 'string' ? text.slice(0, CHAT_MAX) : '';
+    game.handleChat(d, clean || 'Has anyone seen my stapler?', ['all', 'team', 'crew'].includes(channel) ? channel : 'crew', now);
   },
 };
 
@@ -341,10 +337,10 @@ function assignRole(game, p, role, now) {
     p.deskCheckReadyAt = game.day?.startAt ?? 0;
   }
   for (const o of game.players.values()) o.selfDirty = true; // team lists changed
-  // Reopen their terminal (if it's open) so they get exactly the channels the new role can read.
-  if (now != null && p.terminalOpen) {
-    game.closeTerminal(p);
-    game.handleTerminal(p, true);
+  // Hand over the chat history the new role can now read.
+  if (now != null) {
+    if (p.isTeam) game.send(p.id, S2C.CHAT, { channel: 'team', backlog: game.teamChat });
+    if (!p.isManagement) game.send(p.id, S2C.CHAT, { channel: 'crew', backlog: game.crewChat });
   }
   game.roomDirty = true;
 }

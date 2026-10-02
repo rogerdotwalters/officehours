@@ -19,7 +19,7 @@ function isTyping() {
 export class Input {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{ onInteract, onReport, onDeskCheck, onChatKey, onEmote, onCancel, onClick }} callbacks
+   * @param {{ onInteract, onReport, onDeskCheck, onChatKey, onCancel, onClick }} callbacks
    */
   constructor(canvas, callbacks) {
     this.canvas = canvas;
@@ -55,7 +55,6 @@ export class Input {
     else if (e.code === 'KeyT') { e.preventDefault(); this.cb.onChatKey?.('primary'); }
     else if (e.code === 'KeyB') { e.preventDefault(); this.cb.onChatKey?.('team'); }
     else if (e.code === 'Escape' || e.code === 'KeyQ') this.cb.onCancel?.();
-    else if (/^Digit[1-8]$/.test(e.code)) this.cb.onEmote?.(Number(e.code.slice(5)) - 1);
   }
 
   /** Current movement direction, each axis in {-1, 0, 1}. */

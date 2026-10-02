@@ -40,12 +40,11 @@ test('sandbox: switch roles live; only one Management at a time', () => {
   dev(game, a, 'role', { role: ROLE.MANAGEMENT });
   dev(game, a, 'start');
   assert.equal(a.role, ROLE.MANAGEMENT);
-  game.handleTerminal(b, true); // B is sitting at their desk terminal
   dev(game, b, 'role', { role: ROLE.MANAGEMENT }, T0 + 10);
   assert.equal(b.role, ROLE.MANAGEMENT);
   assert.equal(a.role, ROLE.WORKER, 'previous Management demoted');
   assert.ok(b.reportReadyAt <= T0 + 10, 'tools ready straight away');
-  // B's open terminal now carries the back-office history it can read.
+  // B gets the back-office history it can now read.
   assert.ok(outbox.some((m) => m.to === b.id && m.t === S2C.CHAT && m.d.channel === 'team'));
 });
 
@@ -121,40 +120,4 @@ test('sandbox: dev commands do nothing in normal rooms', async () => {
   assert.equal(game.phase, PHASE.LOBBY);
   room.dispatch(me, { t: 'dev', cmd: 'addDummy' }, T0);
   assert.equal(game.players.size, 1);
-});
-
-// ---------------------------------------------------------------------------
-// Worker: test rooms are off unless ENABLE_SANDBOX is "true" or the secret test code matches.
-// ---------------------------------------------------------------------------
-import worker from '../server/worker.js';
-
-function fakeEnv(vars) {
-  const inits = [];
-  const ROOMS = {
-    idFromName: (name) => name,
-    get: () => ({ fetch: async (_url, init) => { inits.push(JSON.parse(init.body)); return new Response('ok'); } }),
-  };
-  return { env: { ROOMS, ...vars }, inits };
-}
-const mint = (env, body) => worker.fetch(new Request('http://x/api/rooms', { method: 'POST', body: JSON.stringify(body) }), env);
-
-test('worker: test rooms off by default, unlocked only by the right test code', async () => {
-  const { env, inits } = fakeEnv({ ENABLE_SANDBOX: 'false', SANDBOX_CODE: 'correct horse battery' });
-  const config = await (await worker.fetch(new Request('http://x/api/config'), env)).json();
-  assert.deepEqual(config, { sandbox: false, sandboxCode: true });
-
-  assert.equal((await mint(env, { sandbox: true })).status, 403);
-  assert.equal((await mint(env, { sandbox: true, testCode: 'wrong' })).status, 403);
-  assert.equal((await mint(env, { sandbox: true, testCode: 'correct horse batter' })).status, 403);
-  assert.equal(inits.length, 0, 'no room minted for a bad code');
-
-  assert.equal((await mint(env, { sandbox: true, testCode: 'correct horse battery' })).status, 201);
-  assert.equal(inits.at(-1).sandbox, true);
-  assert.equal((await mint(env, {})).status, 201, 'normal rooms need no code');
-  assert.equal(inits.at(-1).sandbox, false);
-
-  // No code configured and the flag off: nothing unlocks it, not even an empty code.
-  const off = fakeEnv({ ENABLE_SANDBOX: 'false' });
-  assert.equal((await mint(off.env, { sandbox: true, testCode: '' })).status, 403);
-  assert.equal((await mint(off.env, { sandbox: true, testCode: 'undefined' })).status, 403);
 });

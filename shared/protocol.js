@@ -16,9 +16,7 @@ export const C2S = Object.freeze({
   CANCEL: 'cancel',        // {}  stop current task
   REPORT: 'report',        // { targetId }  Management only
   VOTE: 'vote',            // { targetId }  a player id or 'skip'
-  CHAT: 'chat',            // { text, channel?: 'all' | 'general' | 'crew' | 'team' }  terminal channels need an open desk terminal
-  TERMINAL: 'term',        // { open: bool }  open/close your desk terminal
-  EMOTE: 'emote',          // { id }  in-person reaction (see shared/emotes.js)
+  CHAT: 'chat',            // { text, channel?: 'all' | 'team' | 'crew' }
   SETTINGS: 'settings',    // { settings: {...partial} }  host only, lobby only
   DESK_CHECK: 'deskcheck', // {}  Management only
   MINIGAME: 'minigame',    // { answer }  solution for the task window you have open
@@ -36,9 +34,7 @@ export const S2C = Object.freeze({
   SELF: 'self',            // private: role, desk, tasks, cooldowns
   EVENT: 'event',          // { kind, ... } feed items
   MEETING: 'meeting',      // meeting state (who voted is public, for whom is not until the end)
-  CHAT: 'chat',            // { line } or { backlog }, each with channel 'all' | 'general' | 'crew' | 'team'
-  TERMINAL: 'term',        // { open, reason? }  your desk terminal opened/closed (backlogs follow as CHAT)
-  EMOTE: 'emote',          // { playerId, id }  someone you can see emoted
+  CHAT: 'chat',            // { line } or { backlog }, each with channel 'all' | 'team' | 'crew'
   GAME_OVER: 'over',       // { winner, reason, managementId }
   TOAST: 'toast',          // { text }  private feedback ("Nothing to do here")
   PONG: 'pong',            // { at }

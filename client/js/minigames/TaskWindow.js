@@ -11,10 +11,18 @@
  * to UIS below, and add the server side in shared/minigames/.
  */
 import { mountFridge } from './fridge.js';
+import { mountMicrowave } from './microwave.js';
+import { mountCatfood } from './catfood.js';
+import { mountEmail } from './email.js';
+import { mountRecycling } from './recycling.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
 
 const UIS = {
-  fridge: { mount: mountFridge, sub: 'Coworkers\u2019 food everywhere. Rotate your things to make them fit, then close the door.' },
+  fridge:    { mount: mountFridge,    sub: 'It\u2019s packed. Move coworkers\u2019 food around to make room for yours, then close the door.' },
+  microwave: { mount: mountMicrowave, sub: 'Put it in, set the time from the sticky note, press Start.' },
+  catfood:   { mount: mountCatfood,   sub: 'Scoop food from the can into Mittens\u2019 bowl.' },
+  email:     { mount: mountEmail,     sub: 'Open every email, read it, and delete it.' },
+  recycling: { mount: mountRecycling, sub: 'Everything in the box goes in the bin.' },
 };
 
 export class TaskWindow {
@@ -42,7 +50,7 @@ export class TaskWindow {
     const a = self?.active;
     const ui = a?.minigame && UIS[a.minigame];
     if (!ui) return this.close();
-    const key = `${a.taskId}:${JSON.stringify(a.puzzle.pieces)}`;
+    const key = `${a.taskId}:${JSON.stringify(a.puzzle)}`;
     if (key === this.key) return;
     this.close();
     this.key = key;

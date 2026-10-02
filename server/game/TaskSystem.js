@@ -8,7 +8,7 @@
  * the full duration. The client just shows a progress bar; the server owns the
  * timer, so a modified client cannot finish tasks instantly or remotely.
  */
-import { TASKS, TASKS_BY_ID, TIMED_BY_ID } from '../../shared/tasks.js';
+import { TASKS, TASKS_BY_ID } from '../../shared/tasks.js';
 import { INTERACT_RANGE } from '../../shared/constants.js';
 import { distPointRect } from '../../shared/mapBuilder.js';
 import { pickWeighted, randomInt } from './random.js';
@@ -91,12 +91,6 @@ export class TaskSystem {
     return { ok: true, task: def };
   }
 
-  /** Begin a timed hold that isn't a to-do item (see ACTIONS in tasks.js). */
-  startTimed(player, object, def, now) {
-    player.activeTask = { taskId: def.id, objectId: object.id, startedAt: now, duration: def.duration };
-    player.selfDirty = true;
-  }
-
   cancel(player) {
     if (player.activeTask) {
       player.activeTask = null;
@@ -105,9 +99,8 @@ export class TaskSystem {
   }
 
   /**
-   * Advance a player's active task. Returns the finished task (or action)
-   * definition when it completes this tick, otherwise null. Walking out of range
-   * cancels it.
+   * Advance a player's active task. Returns the finished task definition when it
+   * completes this tick, otherwise null. Walking out of range cancels it.
    */
   update(player, now) {
     const active = player.activeTask;
@@ -129,19 +122,21 @@ export class TaskSystem {
     if (entry) entry.done = true;
     player.activeTask = null;
     player.selfDirty = true;
-    return TIMED_BY_ID.get(active.taskId);
+    return TASKS_BY_ID.get(active.taskId);
   }
 
   /**
    * Check a task-window answer. Returns { ok, task? , reason? }.
    * The player must still be at the object; any valid solution counts.
    */
-  submitMinigame(player, answer) {
+  submitMinigame(player, answer, now = Infinity) {
     const active = player.activeTask;
     if (!active?.minigame) return { ok: false };
+    const game = MINIGAMES[active.minigame];
+    if (now - active.startedAt < game.minMs(active.puzzle)) return { ok: false, reason: 'Too quick! Take a second look.' };
     const object = this.map.getInteractable(active.objectId);
     if (!object || !this.inRange(player, object)) { this.cancel(player); return { ok: false, reason: 'You walked away.' }; }
-    if (!MINIGAMES[active.minigame].check(active.puzzle, answer)) return { ok: false, reason: "That doesn't fit. Try again." };
+    if (!MINIGAMES[active.minigame].check(active.puzzle, answer)) return { ok: false, reason: 'Not quite right. Try again.' };
     return { ok: true, task: this.completeActive(player) };
   }
 

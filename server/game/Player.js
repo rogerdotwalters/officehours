@@ -33,8 +33,7 @@ export class Player {
     this.reportReadyAt = 0;
     this.deskCheckReadyAt = 0;
     this.emergencyCallsLeft = 0;
-    this.terminalOpen = false;    // desk terminal chat: only open terminals receive messages
-    this.selfDirty = true;       // private state changed -> resend SELF
+    this.selfDirty = true;        // private state changed -> resend SELF
   }
 
   get isManagement() {

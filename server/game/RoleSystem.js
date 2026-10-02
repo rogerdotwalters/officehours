@@ -7,7 +7,6 @@
  */
 import { ROLE, DESK_RANGE, REPORT_INITIAL_COOLDOWN_MS, DESK_CHECK_INITIAL_DELAY_MS } from '../../shared/constants.js';
 import { effectiveSnitches } from '../../shared/settings.js';
-import { hasLineOfSight } from '../../shared/vision.js';
 import { shuffle } from './random.js';
 
 export class RoleSystem {
@@ -50,19 +49,16 @@ export class RoleSystem {
    * Validate a Management report. Every rule is checked here, never on the client:
    *  - reporter really is Management, is still in the office, cooldown elapsed
    *  - target exists, is still in the office, is NOT at their own desk
-   *  - target is within the match's report range and in line of sight (Management must actually catch them)
-   *  - the wifi is up (no reports can be filed during an outage)
+   *  - target is within the match's report range (Management must actually catch them)
    */
-  validateReport(reporter, target, now, range, { wifiDown = false } = {}) {
+  validateReport(reporter, target, now, range) {
     if (!reporter.isManagement) return { ok: false, reason: 'Only Management can report.' };
     if (!reporter.isActive) return { ok: false, reason: "You're not in the office." };
-    if (wifiDown) return { ok: false, reason: "The wifi is down. HR can't file anything right now." };
     if (now < reporter.reportReadyAt) return { ok: false, reason: 'Report is on cooldown.' };
     if (!target || target.id === reporter.id) return { ok: false, reason: 'Invalid target.' };
     if (!target.isActive) return { ok: false, reason: "They're not in the office." };
     if (this.isAtDesk(target)) return { ok: false, reason: "They're at their desk." };
     if (Math.hypot(reporter.x - target.x, reporter.y - target.y) > range) return { ok: false, reason: 'Get closer first.' };
-    if (!hasLineOfSight(this.map, reporter.x, reporter.y, target.x, target.y)) return { ok: false, reason: "You can't see them from here." };
     return { ok: true };
   }
 

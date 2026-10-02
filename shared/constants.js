@@ -29,17 +29,6 @@ export const START_FREEZE_MS = 4500;         // nobody moves while roles are rev
 export const REPORT_INITIAL_COOLDOWN_MS = 15_000;
 export const DESK_CHECK_INITIAL_DELAY_MS = 45_000; // first desk check allowed this long into the day
 
-// ---- Vision ---------------------------------------------------------------
-export const VISION_RADIUS = 450;            // fallback sight distance; the lobby's sightRange setting wins. Walls block line of sight.
-
-// ---- Breaker box / wifi ---------------------------------------------------
-export const BREAKER_HOLD_MS = 3000;         // hold time to flip the breaker either way
-export const WIFI_OUTAGE_MS = 30_000;        // wifi comes back on its own after this
-export const BREAKER_COOLDOWN_MS = 45_000;   // after the wifi comes back, before it can be cut again
-export const BREAKER_INITIAL_COOLDOWN_MS = 20_000;
-export const SOCIAL_GOAL_PER_WORKER = 1.5;   // outage tasks needed per worker to fill the social meter
-export const SOCIAL_GOAL_MIN = 3;
-
 // ---- Meetings -------------------------------------------------------------
 export const MEETING_DURATION_MS = 70_000;   // discussion + voting
 export const MEETING_RESULT_MS = 6_000;      // how long the result screen shows

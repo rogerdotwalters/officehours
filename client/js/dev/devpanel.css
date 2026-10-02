@@ -12,7 +12,6 @@ body.is-sandbox::before {
 }
 
 .sbx-menu-btn { background: #ffd23f; }
-.sbx-unlock { margin-top: 0.25rem; }
 
 .sbx-tab {
   position: fixed;

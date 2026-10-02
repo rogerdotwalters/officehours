@@ -12,9 +12,10 @@
  * Optional fields:
  *   during: 'break'   can only be done on a break (or any time once the day has
  *                     no breaks left). See shared/breaks.js.
- *   minigame: 'fridge' instead of holding still, a task window opens with a
- *                     little puzzle. The server makes the puzzle and checks the
- *                     answer (shared/minigames/). `duration` is ignored.
+ *   minigame: '<name>' instead of holding still, a task window opens with a
+ *                     little game: fridge, microwave, email, recycling, catfood.
+ *                     The server makes it and checks the answer (shared/minigames/).
+ *                     `duration` is ignored.
  *
  * To add a task:
  *   1. If it needs a new object, add an interactable with a new `type` in officeMap.js.
@@ -23,18 +24,16 @@
  *   3. Add a TARGET_HINT for new target types so the to-do list says where to go.
  * The server picks it up automatically.
  */
-import { BREAKER_HOLD_MS } from './constants.js';
-
 export const TASKS = [
   // Desk tasks: safe, because you're at your desk.
-  { id: 'emails',      label: 'Answer your emails',               target: 'own_desk',       duration: 5000, chance: 10, desk: true },
+  { id: 'emails',      label: 'Clear out your inbox',             target: 'own_desk',       duration: 0,    chance: 10, desk: true, minigame: 'email' },
   { id: 'tps',         label: 'File your TPS report',             target: 'own_desk',       duration: 4500, chance: 8,  desk: true },
   { id: 'spreadsheet', label: 'Update the big spreadsheet',       target: 'own_desk',       duration: 6000, chance: 6,  desk: true },
 
   // Everyday errands away from your desk: this is where Management catches people.
   { id: 'water',       label: 'Drink from the water cooler',      target: 'water_cooler',   duration: 2500, chance: 9 },
   { id: 'coffee',      label: 'Refill your coffee',               target: 'coffee_machine', duration: 4000, chance: 9 },
-  { id: 'reheat',      label: 'Reheat your leftovers',            target: 'microwave',      duration: 3500, chance: 6 },
+  { id: 'reheat',      label: 'Reheat your leftovers',            target: 'microwave',      duration: 0,    chance: 7, minigame: 'microwave' },
   { id: 'fridge',      label: 'Put your lunch in the fridge',     target: 'fridge',         duration: 0,    chance: 9, minigame: 'fridge' },
   { id: 'bathroom',    label: 'Use the bathroom',                 target: 'toilet',         duration: 5000, chance: 7 },
   { id: 'wash',        label: 'Wash your hands',                  target: 'sink',           duration: 2000, chance: 7 },
@@ -54,8 +53,8 @@ export const TASKS = [
   // Outside.
   { id: 'planters',    label: 'Water the patio planters',         target: 'planter',        duration: 3500, chance: 6 },
   { id: 'car',         label: 'Grab your charger from your car',  target: 'car',            duration: 3000, chance: 6 },
-  { id: 'recycling',   label: 'Take out the recycling',           target: 'dumpster',       duration: 4000, chance: 6 },
-  { id: 'cat',         label: 'Feed the office cat',              target: 'cat_bowl',       duration: 3000, chance: 4 },
+  { id: 'recycling',   label: 'Take out the recycling',           target: 'dumpster',       duration: 0,    chance: 6, minigame: 'recycling' },
+  { id: 'cat',         label: 'Feed the office cat',              target: 'cat_bowl',       duration: 0,    chance: 5, minigame: 'catfood' },
 
   // Rare ones: long, risky, and memorable.
   { id: 'gossip',      label: 'Catch up on gossip at the cooler', target: 'water_cooler',   duration: 7000, chance: 3 },
@@ -66,15 +65,6 @@ export const TASKS = [
 ];
 
 export const TASKS_BY_ID = new Map(TASKS.map((t) => [t.id, t]));
-
-/** Timed holds that aren't to-do items (they share the task progress bar). */
-export const ACTIONS = [
-  { id: 'breaker_off', label: 'Cutting the power',   target: 'breaker', duration: BREAKER_HOLD_MS, action: true },
-  { id: 'breaker_on',  label: 'Restoring the power', target: 'breaker', duration: BREAKER_HOLD_MS, action: true },
-];
-
-/** Tasks and actions together, for anything that shows a progress bar. */
-export const TIMED_BY_ID = new Map([...TASKS, ...ACTIONS].map((t) => [t.id, t]));
 
 /** Human-readable hint for where a task happens (used in the task list). */
 export const TARGET_HINT = {

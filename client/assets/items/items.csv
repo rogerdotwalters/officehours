@@ -1,0 +1,25 @@
+id,name,file,width,uses
+sandwich,sandwich,sandwich.png,80,fridge
+pizza,pizza slice,pizza.png,72,fridge microwave
+milk,milk,milk.png,40,fridge
+soda,soda,soda.png,36,fridge
+apple,apple,apple.png,48,fridge
+banana,banana,banana.png,92,fridge
+takeout,takeout,takeout.png,72,fridge
+yogurt,yogurt,yogurt.png,44,fridge
+cake,birthday cake,cake.png,68,fridge
+burrito,burrito,burrito.png,96,fridge microwave
+sushi,sushi,sushi.png,96,fridge
+juice,orange juice,juice.png,38,fridge
+hotsauce,hot sauce,hotsauce.png,26,fridge
+watermelon,watermelon,watermelon.png,86,fridge
+cheese,cheese,cheese.png,62,fridge
+leftovers,leftovers,leftovers.png,80,fridge microwave
+pickles,pickles,pickles.png,50,fridge
+lunchbox,Your lunchbox,lunchbox.png,92,yours
+smoothie,Your smoothie,smoothie.png,42,yours
+bottle,plastic bottle,bottle.png,30,recycle
+crushed_can,soda can,crushed_can.png,46,recycle
+newspaper,newspaper,newspaper.png,66,recycle
+cardboard,cardboard box,cardboard.png,66,recycle
+jar,glass jar,jar.png,40,recycle

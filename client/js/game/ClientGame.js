@@ -7,18 +7,16 @@
  * - Interpolates remote players between snapshots for smooth motion.
  *
  * Nothing here decides game outcomes; the server is authoritative. The server also
- * only sends players within your sight range and line of sight, so the fog drawn
- * by the renderer is cosmetic: what's hidden simply isn't here.
+ * only sends players within your sight range, so the fog drawn by the renderer is
+ * cosmetic: what's hidden simply isn't here.
  */
 import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { LOBBY_ROOM } from '../../shared/lobbyMap.js';
 import { stepMovement } from '../../shared/physics.js';
 import { DEFAULT_SETTINGS } from '../../shared/settings.js';
 import {
-  PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, COLORS, OFFICE_OPEN_HOUR, OFFICE_CLOSE_HOUR, DESK_RANGE,
+  PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, COLORS, OFFICE_OPEN_HOUR, OFFICE_CLOSE_HOUR,
 } from '../../shared/constants.js';
-import { hasLineOfSight } from '../../shared/vision.js';
-import { EMOTE_MS } from '../../shared/emotes.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
 import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
@@ -39,19 +37,12 @@ export class ClientGame {
     this.serverSelf = null;    // last authoritative local position
     this.meeting = null;
     this.spectateIndex = 0;
-    this.terminal = { open: false, channel: 'general' };
-    this.emotes = new Map();   // playerId -> { id, until }
   }
 
   // ---- Applying server messages -------------------------------------------
   applyRoom(room, now) {
     this.room = { ...room, receivedAt: now };
     this.roster = new Map(room.players.map((p) => [p.id, p]));
-  }
-
-  /** Someone you can see emoted. */
-  applyEmote(playerId, id, now) {
-    this.emotes.set(playerId, { id, until: now + EMOTE_MS });
   }
 
   applySelf(self, now) {
@@ -96,8 +87,6 @@ export class ClientGame {
     this.serverSelf = null;
     this.self = null;
     this.meeting = null;
-    this.terminal = { open: false, channel: 'general' };
-    this.emotes.clear();
   }
 
   // ---- Derived state -------------------------------------------------------
@@ -112,36 +101,6 @@ export class ClientGame {
   get isSnitch() { return this.role === ROLE.SNITCH; }
   get isTeam() { return this.isManagement || this.isSnitch; }
   get inOffice() { return !!this.local && !this.inLobby && this.self?.status === STATUS.ACTIVE; }
-
-  // ---- Wifi, desk terminal, sight ------------------------------------------
-  /** { down, until, readyAt } in local performance.now() time, or null in the lobby. */
-  wifiInfo(now) {
-    const w = this.room?.wifi;
-    if (!w) return null;
-    const at = this.room.receivedAt;
-    return { down: w.down, until: at + w.msLeft, readyAt: at + w.readyIn, msLeft: Math.max(0, w.msLeft - (now - at)) };
-  }
-  get wifiDown() { return !!this.room?.wifi?.down; }
-
-  /** Within DESK_RANGE of your own seat (display only; the server re-checks). */
-  get atOwnDesk() {
-    const desk = this.self?.deskId && this.map.desksById.get(this.self.deskId);
-    return !!(desk && this.local && Math.hypot(this.local.x - desk.seat.x, this.local.y - desk.seat.y) <= DESK_RANGE);
-  }
-
-  /** Terminal channels I can read, in tab order. */
-  terminalChannels() {
-    const out = ['general'];
-    if (!this.isManagement) out.push('crew');
-    if (this.isTeam) out.push('team');
-    return out;
-  }
-
-  /** Fog of war applies while you're walking the floor (not to spectators, meetings or the see-all test tool). */
-  get fogged() {
-    if (this.phase !== PHASE.PLAYING || !this.inOffice) return false;
-    return !this.room?.sandbox?.seeAll?.includes(this.selfId); // SANDBOX: see-everyone toggle
-  }
 
   nameOf(id) { return this.roster.get(id)?.name ?? 'Someone'; }
   colorOf(id) { return COLORS[this.roster.get(id)?.colorId ?? 9].hex; }
@@ -274,11 +233,6 @@ export class ClientGame {
   actionFor(o) {
     if (o.type === 'meeting_bell') return 'Call an all-hands meeting';
     if (o.type === 'time_clock') return this.isTeam ? null : 'Clock out and go home';
-    if (o.type === 'breaker') {
-      if (this.wifiDown) return 'Restore the power';
-      const wait = (this.wifiInfo(performance.now())?.readyAt ?? 0) - performance.now();
-      return wait > 0 ? `Breaker is stuck (${Math.ceil(wait / 1000)}s)` : 'Cut the power and kill the wifi';
-    }
     const task = this.pendingTaskFor(o);
     return task ? task.label : null;
   }
@@ -305,7 +259,7 @@ export class ClientGame {
 
   /** Management only: players I could report right now. */
   reportableTargets() {
-    if (!this.isManagement || !this.local || this.phase !== PHASE.PLAYING || this.wifiDown) return [];
+    if (!this.isManagement || !this.local || this.phase !== PHASE.PLAYING) return [];
     const range = this.settings.reportRange;
     const onBreak = !!this.breakInfo(performance.now()).current;
     const out = [];
@@ -313,8 +267,7 @@ export class ClientGame {
       if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
       if (onBreak && this.map.inBreakArea(e.x, e.y)) continue; // safe on break
       const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
-      const inRange = d <= range && hasLineOfSight(this.map, this.local.x, this.local.y, e.x, e.y);
-      out.push({ id, d, inRange });
+      out.push({ id, d, inRange: d <= range });
     }
     return out.sort((a, b) => a.d - b.d);
   }

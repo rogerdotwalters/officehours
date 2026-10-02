@@ -40,7 +40,7 @@ export const SETTINGS_SPEC = {
     label: 'Snitches', group: 'Management',
     min: 0, max: 3, step: 1, default: 1,
     format: (v) => String(v),
-    help: 'Secret helpers who share the back-office terminal channel with Management. At least two real workers are always kept.',
+    help: 'Secret helpers who share a private chat with Management. At least two real workers are always kept.',
   },
   reportRange: {
     label: 'Report range', group: 'Management',

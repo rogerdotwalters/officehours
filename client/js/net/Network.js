@@ -51,11 +51,11 @@ export class Network {
   }
 
   // ---- Lifecycle -----------------------------------------------------------
-  async createRoom({ sandbox = false, testCode } = {}) {
+  async createRoom({ sandbox = false } = {}) {
     const res = await fetch(`${this.httpBase}/api/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sandbox, testCode }), // sandbox: true asks for a test room (testCode unlocks it)
+      body: JSON.stringify({ sandbox }), // true asks for a test room
     });
     if (!res.ok) {
       const reason = await res.json().catch(() => ({}));

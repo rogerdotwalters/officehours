@@ -35,7 +35,10 @@ const PLACES = [
   ['desk', 'My desk'],
   ['bell', 'Meeting bell'],
   ['time_clock', 'Time clock'],
-  ['fridge', 'Fridge (puzzle task)'],
+  ['fridge', 'Fridge (puzzle)'],
+  ['microwave', 'Microwave (puzzle)'],
+  ['cat_bowl', 'Cat bowl (puzzle)'],
+  ['dumpster', 'Recycling bin (puzzle)'],
   ['office_a', 'Open Office A'],
   ['office_b', 'Open Office B'],
   ['studio', 'Design Studio'],
@@ -100,8 +103,7 @@ export function install(ctx) {
     const currentRole = inMatch ? (game.role ?? 'random') : myPref;
     const out = game.self && game.self.status !== 'active';
 
-    // (Sections that don't apply right now are `false`; drop them so they don't render as text.)
-    body.replaceChildren(...[
+    body.replaceChildren(
       section('Invite someone', inviteBlock(room.code),
         el('p', { class: 'sbx-note' }, 'Anyone with the link joins this test room, even mid-match. They get a free desk and the current tasks.')),
 
@@ -168,7 +170,7 @@ export function install(ctx) {
         QUICK_SETTINGS.map((key) => stepper(key))),
 
       section('Leave', buttons([['Leave the test room', () => ctx.leaveRoom()]])),
-    ].filter(Boolean));
+    );
   }
 
   // ---- Building blocks ---------------------------------------------------------
@@ -215,8 +217,7 @@ export function install(ctx) {
   function dummySayBlock() {
     const input = el('input', { class: 'sbx-select', maxlength: 140, placeholder: 'Has anyone seen my stapler?', 'aria-label': 'What the dummy says' });
     const channel = el('select', { class: 'sbx-select', 'aria-label': 'Chat' },
-      el('option', { value: 'general' }, 'Terminal: #general'), el('option', { value: 'crew' }, 'Terminal: water cooler'),
-      el('option', { value: 'team' }, 'Terminal: back office'), el('option', { value: 'all' }, 'Meeting / lobby chat'));
+      el('option', { value: 'crew' }, 'Water cooler'), el('option', { value: 'team' }, 'Back office'), el('option', { value: 'all' }, 'Everyone'));
     return el('div', { class: 'sbx-say' },
       el('span', { class: 'sbx-note' }, 'Make a dummy say something:'),
       input,
@@ -244,53 +245,29 @@ export function install(ctx) {
   setInterval(() => { if (!active() && document.body.classList.contains('is-sandbox')) render(); }, 1000);
 }
 
-/**
- * "Open a test room" on the menu. If the server has test rooms open to everyone
- * it's a plain button; if they're locked behind a test code, a small "Testing?"
- * fold-out asks for the code first. Nothing shows if test rooms are off.
- */
+/** "Open a test room" on the menu, only if the server has test rooms switched on. */
 async function addMenuButton(ctx) {
-  let config;
   try {
     const res = await fetch(`${ctx.net.httpBase}/api/config`);
-    if (!res.ok) return;
-    config = await res.json();
+    if (!res.ok || !(await res.json()).sandbox) return;
   } catch {
     return;
   }
-  if (!config.sandbox && !config.sandboxCode) return;
-
   const createBtn = document.getElementById('menu-create');
   const btn = el('button', { class: 'btn sbx-menu-btn', type: 'button' }, 'Open a test room');
-  const codeInput = config.sandbox ? null : el('input', {
-    type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
-    enterkeyhint: 'go', placeholder: 'If you have one',
-  });
-  const open = async () => {
+  btn.addEventListener('click', async () => {
     const name = document.getElementById('menu-name').value.trim() || 'Tester';
-    const testCode = codeInput?.value.trim();
-    if (codeInput && !testCode) return ctx.ui.setMenuError('Enter the test code first.');
     btn.disabled = true;
     ctx.ui.setMenuError('');
     try {
-      ctx.enterRoom(await ctx.net.createRoom({ sandbox: true, testCode }), name);
+      ctx.enterRoom(await ctx.net.createRoom({ sandbox: true }), name);
     } catch (err) {
       ctx.ui.setMenuError(err.message);
     } finally {
       btn.disabled = false;
     }
-  };
-  btn.addEventListener('click', open);
-
-  if (!codeInput) return createBtn.after(btn);
-  // Locked behind a code: a "Test code" box with its own button, laid out like the room-code row.
-  codeInput.addEventListener('keydown', (e) => e.key === 'Enter' && open());
-  btn.textContent = 'Test room';
-  btn.className = 'btn sbx-menu-btn';
-  const row = el('div', { class: 'join-row sbx-unlock' },
-    el('label', { class: 'field' }, el('span', {}, 'Test code'), codeInput),
-    btn);
-  document.getElementById('menu-error').before(row);
+  });
+  createBtn.after(btn);
 }
 
 function addStylesheet() {

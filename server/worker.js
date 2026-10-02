@@ -2,8 +2,8 @@
  * Worker entrypoint.
  *
  *   POST /api/rooms          -> { code }   mint a new room (Durable Object)
- *                               body { sandbox: true, testCode? } mints a test room (SANDBOX)
- *   GET  /api/config         -> { sandbox, sandboxCode } which optional features are on
+ *                               body { sandbox: true } mints a test room (SANDBOX)
+ *   GET  /api/config         -> { sandbox } which optional features are on
  *   GET  /ws?room=CODE       -> WebSocket  forwarded to that room's Durable Object
  *   anything else            -> static client (served by Workers Static Assets
  *                               before this code runs; see wrangler.toml)
@@ -15,14 +15,6 @@ import { randomCode } from './game/random.js';
 export { GameRoom };
 
 const CODE_PATTERN = new RegExp(`^[${ROOM_CODE_ALPHABET}]{${ROOM_CODE_LENGTH}}$`);
-
-/** Compare two strings without leaking how much of them matched. */
-function sameSecret(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
-  let diff = a.length ^ b.length;
-  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-  return diff === 0;
-}
 
 /** CORS is only needed if the client is hosted on a different origin (e.g. Pages). */
 function corsHeaders(request, env) {
@@ -53,12 +45,8 @@ export default {
     const url = new URL(request.url);
     const cors = corsHeaders(request, env);
     // Optional features the client can ask about via /api/config.
-    // SANDBOX: test rooms are open to everyone only if ENABLE_SANDBOX is "true".
-    // Otherwise they unlock with the secret SANDBOX_CODE (wrangler secret put SANDBOX_CODE).
-    const features = {
-      sandbox: String(env.ENABLE_SANDBOX ?? 'false').toLowerCase() === 'true',
-      sandboxCode: !!env.SANDBOX_CODE,
-    };
+    const features = { sandbox: false };
+    features.sandbox = String(env.ENABLE_SANDBOX ?? 'false').toLowerCase() === 'true'; // SANDBOX: test rooms
 
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
       return new Response(null, { status: 204, headers: cors });
@@ -70,11 +58,8 @@ export default {
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
-      const unlocked = features.sandbox || sameSecret(body?.testCode, env.SANDBOX_CODE);
-      const sandbox = body?.sandbox === true && unlocked;
-      if (body?.sandbox === true && !sandbox) {
-        return json({ error: features.sandboxCode ? "That test code isn't right." : 'Test rooms are switched off on this server.' }, 403, cors);
-      }
+      const sandbox = body?.sandbox === true && features.sandbox;
+      if (body?.sandbox === true && !sandbox) return json({ error: 'Test rooms are switched off on this server.' }, 403, cors);
       // Try a few codes in case of a (rare) collision with a live room.
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = randomCode(ROOM_CODE_LENGTH, ROOM_CODE_ALPHABET);

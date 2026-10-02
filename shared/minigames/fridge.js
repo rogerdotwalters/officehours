@@ -1,150 +1,223 @@
 /**
- * Fridge Tetris: fit your lunch into a fridge already packed with your
- * coworkers' food.
+ * Fridge: fit your lunchbox and smoothie into a fridge already full of your
+ * coworkers' food. Their food can be moved, slid together, tucked into each
+ * other's transparent gaps or stacked, but it has to stay in the fridge.
  *
- * The fridge is a grid completely tiled with food items (random polyominoes).
- * Two of them are pulled out and handed to you, rotated, as "your" items; a
- * small extra gap is opened as a decoy. Every puzzle therefore has a solution.
+ * Items are pictures (client/assets/items/); their collision shapes come from
+ * the pictures' solid pixels (pixelMask.js). Everything here works on the
+ * mask grid: one cell = ITEM_CELL world units.
  *
- * The server generates the puzzle (it keeps the answer) and checks the
- * placements the client sends back. The client only draws it.
+ * Generation (server): pack your items and as many coworkers' items as fit,
+ * tight, onto the shelves (that packing is the known solution); then take
+ * yours out and spread the rest evenly so no gap is big enough. Moving
+ * things back together always works, so every puzzle is solvable.
  */
+import { ITEMS_BY_ID, itemsFor, ITEM_CELL } from './items.js';
 
-export const COLS = 6;
-export const ROWS = 7;
-
-// Base shapes as [x, y] cells. Rotations are generated.
-const SHAPES = {
-  1: [[[0, 0]]],
-  2: [[[0, 0], [1, 0]]],
-  3: [[[0, 0], [1, 0], [2, 0]], [[0, 0], [1, 0], [0, 1]]],
-  4: [
-    [[0, 0], [1, 0], [2, 0], [3, 0]],  // I
-    [[0, 0], [1, 0], [0, 1], [1, 1]],  // O
-    [[0, 0], [0, 1], [0, 2], [1, 2]],  // L
-    [[0, 0], [1, 0], [2, 0], [1, 1]],  // T
-    [[1, 0], [2, 0], [0, 1], [1, 1]],  // S
-  ],
-};
-
-const FOOD = {
-  1: ['yogurt', 'hot sauce', 'soda', 'string cheese', 'pudding cup', 'lime'],
-  2: ['leftover pizza', 'sandwich', 'milk', 'salad', 'sushi', 'oat milk'],
-  3: ['soup', 'burrito', 'noodles', 'hummus tray', 'curry'],
-  4: ['birthday cake', 'casserole', 'meal prep', 'lasagna', 'party platter'],
-};
-const OWNERS = ['Gary', 'Linda', 'Priya', 'Marco', 'Janet', 'Kev', 'Bea', 'Omar', 'Sue'];
-const COLORS = ['#e8a87c', '#9fd3c7', '#f6d365', '#c3aed6', '#a8d8ea', '#f4a7b9', '#b5e48c', '#ffcf87', '#d4c4a8'];
-const YOURS = [
-  { label: 'Your lunchbox', color: '#3a6fd8' },
-  { label: 'Your smoothie', color: '#2f9e5b' },
+export const CELL = ITEM_CELL;
+export const FRIDGE_W = 320;                 // world units
+export const SHELVES = [                     // inside space of each shelf, world units
+  { x: 0, y: 0,   w: 320, h: 104 },
+  { x: 0, y: 112, w: 320, h: 104 },
+  { x: 0, y: 224, w: 320, h: 104 },
 ];
+export const FRIDGE_H = 328;
+const COLS = FRIDGE_W / CELL;
+const ROWS = FRIDGE_H / CELL;
+const SHELF_CELLS = SHELVES.map((s) => ({ x0: s.x / CELL, y0: s.y / CELL, x1: (s.x + s.w) / CELL, y1: (s.y + s.h) / CELL }));
+const OWNERS = ['Gary', 'Linda', 'Priya', 'Marco', 'Janet', 'Kev', 'Bea', 'Omar', 'Sue', 'Dwayne'];
 
-/** Normalise cells so the smallest x and y are 0, sorted row-major. */
-function normalise(cells) {
-  const minX = Math.min(...cells.map((c) => c[0]));
-  const minY = Math.min(...cells.map((c) => c[1]));
-  return cells.map(([x, y]) => [x - minX, y - minY]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+// ---------------------------------------------------------------------------
+// Occupancy: a grid of the fridge's cells, each holding (piece index + 1) or 0.
+// ---------------------------------------------------------------------------
+export class Fridge {
+  constructor() {
+    this.occ = new Int16Array(COLS * ROWS);
+  }
+
+  /** Which shelf a cell is in, or -1 (shelf boards and outside don't count). */
+  static shelfAt(cx, cy) {
+    for (let i = 0; i < SHELF_CELLS.length; i++) {
+      const s = SHELF_CELLS[i];
+      if (cx >= s.x0 && cx < s.x1 && cy >= s.y0 && cy < s.y1) return i;
+    }
+    return -1;
+  }
+
+  /** Which shelf a row is in, or -1 (shelves span the full width). */
+  static shelfOfRow(cy) {
+    for (let i = 0; i < SHELF_CELLS.length; i++) if (cy >= SHELF_CELLS[i].y0 && cy < SHELF_CELLS[i].y1) return i;
+    return -1;
+  }
+
+  /** Can `item` go with its top-left at cell (cx, cy)? Ignores piece `self`. */
+  fits(item, cx, cy, self = -1) {
+    // Bounding box first: inside the fridge, top and bottom rows on the same shelf.
+    if (cx + item.left < 0 || cx + item.right >= COLS) return false;
+    const top = Fridge.shelfOfRow(cy + item.top);
+    if (top === -1 || top !== Fridge.shelfOfRow(cy + item.bottom)) return false;
+    // Then the actual pixel shape against everything else.
+    const occ = this.occ;
+    const mine = self + 1;
+    for (const [sx, sy] of item.cells) {
+      const o = occ[(cy + sy) * COLS + cx + sx];
+      if (o !== 0 && o !== mine) return false;
+    }
+    return true;
+  }
+
+  put(item, cx, cy, index) {
+    for (const [sx, sy] of item.cells) this.occ[(cy + sy) * COLS + cx + sx] = index + 1;
+  }
+
+  take(item, cx, cy, index) {
+    for (const [sx, sy] of item.cells) {
+      const k = (cy + sy) * COLS + cx + sx;
+      if (this.occ[k] === index + 1) this.occ[k] = 0;
+    }
+  }
+
+  /** Let an item fall straight down until it rests on something. */
+  settle(item, cx, cy, self = -1) {
+    while (this.fits(item, cx, cy + 1, self)) cy++;
+    return cy;
+  }
 }
 
-/** Rotate cells 90 degrees clockwise `times` times. */
-export function rotate(cells, times = 0) {
-  let out = cells.map((c) => [...c]);
-  for (let i = 0; i < ((times % 4) + 4) % 4; i++) out = out.map(([x, y]) => [-y, x]);
-  return normalise(out);
+/** Row that puts an item's lowest solid cell on a shelf's floor. */
+function floorRow(item, shelf) {
+  return SHELF_CELLS[shelf].y1 - 1 - item.bottom;
 }
 
-/** Cells of a piece placed with its anchor (first cell, row-major) at (x, y). */
-export function placedCells(piece, rot, x, y) {
-  const cells = rotate(piece.cells, rot);
-  const [ax, ay] = cells[0];
-  return cells.map(([cx, cy]) => [cx - ax + x, cy - ay + y]);
+/** Leftmost spot on a shelf floor (sliding into transparent gaps), or null. */
+function firstFitOnFloor(fridge, item, shelf, fromX = 0) {
+  const cy = floorRow(item, shelf);
+  const s = SHELF_CELLS[shelf];
+  for (let k = 0; k < s.x1 - s.x0; k++) {
+    const cx = s.x0 + ((fromX - s.x0 + k) % (s.x1 - s.x0)) - item.left;
+    if (fridge.fits(item, cx, cy)) return { cx, cy };
+  }
+  return null;
+}
+
+/** Anywhere at all (any height, settled), for the "too easy?" check. */
+function anyFit(fridge, item) {
+  for (let cy = -item.top; cy + item.bottom < ROWS; cy++) {
+    for (let cx = -item.left; cx + item.right < COLS; cx++) if (fridge.fits(item, cx, cy)) return { cx, cy };
+  }
+  return null;
 }
 
 /**
  * Build a puzzle. `rand()` returns a float in [0, 1).
- * Returns { cols, rows, items: [{ label, color, cells }], pieces: [{ label, color, cells }], answer }.
+ * pieces: [{ key, item, owner, yours, x, y }] in world units; yours start out of
+ * the fridge (x/y null). `solution` (server only) is a packing that works.
  */
 export function generateFridge(rand) {
-  const pick = (list) => list[Math.floor(rand() * list.length)];
-  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(-1));
-  const items = [];
+  const shuffle = (list) => list.map((v) => [rand(), v]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+  const yours = itemsFor('yours');
+  const food = itemsFor('fridge');
 
-  // Greedy random tiling: fill the first empty cell (row-major) with a random
-  // shape that fits there; a single cell always fits, so this never fails.
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      if (grid[y][x] !== -1) continue;
-      const sizes = [4, 4, 3, 3, 2, 2, 1].sort(() => rand() - 0.5);
-      let placed = null;
-      for (const size of sizes) {
-        for (const base of [...SHAPES[size]].sort(() => rand() - 0.5)) {
-          const rot = Math.floor(rand() * 4);
-          const cells = placedCells({ cells: base }, rot, x, y);
-          if (cells.every(([cx, cy]) => cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS && grid[cy][cx] === -1)) {
-            placed = cells;
-            break;
-          }
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const fridge = new Fridge();
+    const pieces = [];
+    const place = (item, extra, from) => {
+      for (const shelf of shuffle([0, 1, 2])) {
+        const spot = firstFitOnFloor(fridge, item, shelf, from);
+        if (spot) {
+          const i = pieces.length;
+          fridge.put(item, spot.cx, spot.cy, i);
+          pieces.push({ ...extra, item: item.id, cx: spot.cx, cy: spot.cy, shelf });
+          return true;
         }
-        if (placed) break;
       }
-      const id = items.length;
-      for (const [cx, cy] of placed) grid[cy][cx] = id;
-      const size = placed.length;
-      const food = pick(FOOD[size]);
-      items.push({ label: `${pick(OWNERS)}'s ${food}`, food, color: pick(COLORS), cells: placed });
+      return false;
+    };
+
+    // 1. Your things first, somewhere random, so their spaces exist.
+    let ok = true;
+    yours.forEach((item, k) => {
+      ok = ok && place(item, { key: `y${k}`, yours: true }, Math.floor(rand() * COLS));
+    });
+    if (!ok) continue;
+    // 2. Then pack in as much coworker food as fits, tight from the left.
+    let n = 0;
+    for (const item of shuffle(food)) {
+      if (n >= 11) break;
+      if (place(item, { key: `c${n}`, yours: false, owner: OWNERS[Math.floor(rand() * OWNERS.length)] }, 0)) n++;
     }
+    if (n < 7) continue;
+    const solution = Object.fromEntries(pieces.map((p) => [p.key, { x: p.cx * CELL, y: p.cy * CELL }]));
+
+    // 3. Take your things out, then spread each shelf's food evenly so the
+    //    free space is broken up into gaps too small for them.
+    pieces.forEach((p, i) => { if (p.yours) fridge.take(ITEMS_BY_ID.get(p.item), p.cx, p.cy, i); });
+    for (let shelf = 0; shelf < SHELVES.length; shelf++) spreadShelf(fridge, pieces, shelf);
+
+    // 4. Too easy if both of yours already fit somewhere. Try again.
+    const test = new Fridge();
+    test.occ.set(fridge.occ);
+    let trivial = true;
+    yours.forEach((item, k) => {
+      const spot = anyFit(test, item);
+      if (!spot) trivial = false;
+      else test.put(item, spot.cx, spot.cy, 100 + k);
+    });
+    if (trivial && attempt < 29) continue;
+
+    return {
+      width: FRIDGE_W, height: FRIDGE_H, cell: CELL, shelves: SHELVES,
+      pieces: pieces.map((p) => ({
+        key: p.key, item: p.item, yours: p.yours, owner: p.owner ?? null,
+        x: p.yours ? null : p.cx * CELL, y: p.yours ? null : p.cy * CELL,
+      })),
+      solution,
+    };
   }
-
-  // Hand two of the bigger items to the player.
-  const big = items.map((it, i) => i).filter((i) => items[i].cells.length >= 3).sort(() => rand() - 0.5);
-  const takeIds = big.slice(0, 2);
-  if (takeIds.length < 2) return generateFridge(rand); // vanishingly rare: try again
-  // Open one small decoy gap too, so it's not just "fill every hole".
-  const small = items.map((it, i) => i).filter((i) => !takeIds.includes(i) && items[i].cells.length <= 2);
-  const decoyId = small.length ? pick(small) : null;
-
-  const pieces = takeIds.map((id, k) => ({
-    ...YOURS[k],
-    cells: rotate(items[id].cells, 1 + Math.floor(rand() * 3)),
-  }));
-  const answer = takeIds.map((id) => items[id].cells);
-  const removed = new Set([...takeIds, decoyId]);
-  return {
-    cols: COLS,
-    rows: ROWS,
-    items: items.filter((_, i) => !removed.has(i)),
-    pieces,
-    answer,
-  };
+  throw new Error('Could not build a fridge puzzle; check the item table.');
 }
 
-/** What the client gets: everything except the answer. */
-export function publicPuzzle(puzzle) {
-  const { answer, ...rest } = puzzle;
+/** Slide a shelf's items left, then share the leftover space out between them. */
+function spreadShelf(fridge, pieces, shelf) {
+  const onShelf = pieces.map((p, i) => ({ p, i })).filter(({ p }) => !p.yours && p.shelf === shelf).sort((a, b) => a.p.cx - b.p.cx);
+  if (!onShelf.length) return;
+  const items = onShelf.map(({ p }) => ITEMS_BY_ID.get(p.item));
+  const s = SHELF_CELLS[shelf];
+  const rightEdge = Math.max(...onShelf.map(({ p }, k) => p.cx + items[k].right + 1));
+  const gap = Math.floor((s.x1 - rightEdge) / (onShelf.length + 1));
+  if (gap <= 0) return;
+  // Move from the right so nothing passes through anything.
+  for (let k = onShelf.length - 1; k >= 0; k--) {
+    const { p, i } = onShelf[k];
+    const shift = gap * (k + 1);
+    fridge.take(items[k], p.cx, p.cy, i);
+    if (fridge.fits(items[k], p.cx + shift, p.cy, i)) p.cx += shift;
+    fridge.put(items[k], p.cx, p.cy, i);
+  }
+}
+
+export function publicFridge(puzzle) {
+  const { solution, ...rest } = puzzle;
   return rest;
 }
 
 /**
- * Check a set of placements: [{ piece, rot, x, y }], one per piece.
- * Any valid packing counts, not just the generated answer.
+ * Check an answer: { positions: { [key]: { x, y } } } for every piece, in world
+ * units on the cell grid. Every piece inside one shelf, nothing overlapping.
  */
-export function checkFridge(puzzle, placements) {
-  if (!Array.isArray(placements) || placements.length !== puzzle.pieces.length) return false;
-  const taken = new Set();
-  for (const it of puzzle.items) for (const [x, y] of it.cells) taken.add(`${x},${y}`);
-  const seen = new Set();
-  for (const pl of placements) {
-    const i = Number(pl?.piece);
-    if (!Number.isInteger(i) || i < 0 || i >= puzzle.pieces.length || seen.has(i)) return false;
-    seen.add(i);
-    const rot = Number(pl.rot), x = Number(pl.x), y = Number(pl.y);
-    if (![rot, x, y].every(Number.isInteger)) return false;
-    for (const [cx, cy] of placedCells(puzzle.pieces[i], rot, x, y)) {
-      const key = `${cx},${cy}`;
-      if (cx < 0 || cy < 0 || cx >= puzzle.cols || cy >= puzzle.rows || taken.has(key)) return false;
-      taken.add(key);
-    }
+export function checkFridge(puzzle, answer) {
+  const pos = answer?.positions;
+  if (!pos || typeof pos !== 'object') return false;
+  const fridge = new Fridge();
+  for (let i = 0; i < puzzle.pieces.length; i++) {
+    const piece = puzzle.pieces[i];
+    const p = pos[piece.key];
+    const item = ITEMS_BY_ID.get(piece.item);
+    if (!p || !item) return false;
+    const x = Number(p.x), y = Number(p.y);
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x % CELL || y % CELL) return false;
+    if (!fridge.fits(item, x / CELL, y / CELL)) return false;
+    fridge.put(item, x / CELL, y / CELL, i);
   }
   return true;
 }

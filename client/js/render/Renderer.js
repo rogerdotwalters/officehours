@@ -6,8 +6,6 @@
 import { drawFloors, drawWalls, drawRoomLabels, drawDecor, drawInteractable, roundRect } from './officeArt.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { COLORS, DESK_RANGE, PLAYER_RADIUS, PHASE, ROLE } from '../../shared/constants.js';
-import { visibilityPolygon } from '../../shared/vision.js';
-import { EMOTES_BY_ID } from '../../shared/emotes.js';
 
 const SKIN = ['#f3cfae', '#e0ac85', '#c68b62', '#9a6545', '#6f4630'];
 const HAIR = ['#2b1d14', '#5a3a1f', '#9b6b2f', '#d9b25b', '#1a1a1a', '#7b2f1d'];
@@ -112,15 +110,8 @@ export class Renderer {
     drawRoomLabels(ctx, map);
     drawDecor(ctx, map);
     this.drawOwnDeskZone(game, now);
-    const objectState = { wifiDown: game.wifiDown, now };
-    for (const o of map.interactables) drawInteractable(ctx, o, objectState);
+    for (const o of map.interactables) drawInteractable(ctx, o);
     this.drawDeskNameplates(game);
-
-    // Fog of war: everything outside your line of sight is dimmed. You still
-    // remember the floor plan; walls, task highlights and the colleagues the
-    // server says you can see are drawn on top.
-    if (game.fogged) this.drawFog(map, game.local, game.settings.sightRange);
-
     drawWalls(ctx, map);
     this.drawTaskHighlights(game, now, frame.usable);
 
@@ -128,83 +119,34 @@ export class Renderer {
     positions.sort((a, b) => a.y - b.y);
     const reportable = new Map(game.reportableTargets().map((t) => [t.id, t]));
     for (const p of positions) this.drawPlayer(game, p, now, reportable.get(p.id));
-    for (const p of positions) this.drawEmote(game, p, now);
 
+    this.drawFog(game);
     this.drawDeskCheckGuide(game, now);
     ctx.restore();
   }
 
   /**
-   * Darken the screen, then cut out what you can see: a polygon cast against the
-   * walls, out to your sight range, with a soft edge. Cosmetic only: the server
-   * doesn't send players you can't see, so nothing is hidden under here.
+   * Darkness beyond your sight range. Cosmetic only: the server doesn't send
+   * players you can't see, so there is nothing hidden under here to uncover.
    */
-  drawFog(map, eye, range) {
-    const { canvas, ctx } = this;
-    if (!this.fog) this.fog = document.createElement('canvas');
-    const fog = this.fog;
-    if (fog.width !== canvas.width || fog.height !== canvas.height) {
-      fog.width = canvas.width;
-      fog.height = canvas.height;
-    }
-    const f = fog.getContext('2d');
-    f.setTransform(1, 0, 0, 1, 0, 0);
-    f.globalCompositeOperation = 'source-over';
-    f.clearRect(0, 0, fog.width, fog.height);
-    f.fillStyle = 'rgba(14, 19, 30, 0.84)';
-    f.fillRect(0, 0, fog.width, fog.height);
-
-    // Same world transform as the main canvas.
-    const k = this.dpr * this.scale;
-    f.setTransform(k, 0, 0, k, this.dpr * (this.viewW / 2 - this.cam.x * this.scale), this.dpr * (this.viewH / 2 - this.cam.y * this.scale));
-    f.globalCompositeOperation = 'destination-out';
-    const poly = visibilityPolygon(map, eye.x, eye.y, range);
-    const glow = f.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, range);
-    glow.addColorStop(0, 'rgba(0,0,0,1)');
-    glow.addColorStop(0.75, 'rgba(0,0,0,1)');
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    f.fillStyle = glow;
-    f.beginPath();
-    poly.forEach(([x, y], i) => (i ? f.lineTo(x, y) : f.moveTo(x, y)));
-    f.closePath();
-    f.fill();
-
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(fog, 0, 0);
-    ctx.restore();
-  }
-
-  /** A speech bubble with an emote above someone who just reacted. */
-  drawEmote(game, p, now) {
-    const e = game.emotes.get(p.id);
-    if (!e || now > e.until) return;
-    const glyph = EMOTES_BY_ID.get(e.id)?.glyph;
-    if (!glyph) return;
+  drawFog(game) {
+    if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
+    if (game.room?.sandbox?.seeAll?.includes(game.selfId)) return; // SANDBOX: see-everyone toggle
     const ctx = this.ctx;
-    const left = e.until - now;
-    const pop = Math.min(1, (2600 - left) / 140);        // quick pop-in
-    const fade = Math.min(1, left / 300);                 // fade out at the end
-    const badge = p.id !== game.selfId && game.teamRoleOf(p.id) ? 16 : 0; // clear the teammate badge
-    const x = p.x, y = p.y - PLAYER_RADIUS - 46 - badge - (1 - pop) * 6;
-    ctx.save();
-    ctx.globalAlpha = fade;
-    roundRect(ctx, x - 18, y - 17, 36, 30, 10);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#1d2742';
-    ctx.stroke();
+    const r = game.settings.sightRange;
+    const { x, y } = game.local;
+    const g = ctx.createRadialGradient(x, y, r * 0.78, x, y, r);
+    g.addColorStop(0, 'rgba(20, 26, 40, 0)');
+    g.addColorStop(1, 'rgba(20, 26, 40, 0.78)');
+    ctx.fillStyle = g;
+    const span = Math.max(this.w, this.h) / this.scale + 80;
+    ctx.fillRect(this.cam.x - span, this.cam.y - span, span * 2, span * 2);
+    // Faint edge so the boundary reads as "sight", not a lighting glitch.
     ctx.beginPath();
-    ctx.moveTo(x - 5, y + 13); ctx.lineTo(x, y + 20); ctx.lineTo(x + 5, y + 13);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.font = '18px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#1d2742';
-    ctx.fillText(glyph, x, y - 1);
-    ctx.restore();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
   /** During a desk check: an arrow from you toward your desk. */

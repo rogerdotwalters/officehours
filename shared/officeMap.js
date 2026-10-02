@@ -105,8 +105,6 @@ export const OFFICE = {
     // Lobby
     { id: 'plant',        type: 'plant',          label: 'Lobby ficus',       x: 724,  y: 624,  w: 40,  h: 40,  solid: true },
     { id: 'time_clock',   type: 'time_clock',     label: 'Time clock',        x: 760,  y: 1400, w: 50,  h: 40,  solid: true },
-    // West hallway dead end, between the Restrooms and the Lobby: cutting the power kills the office wifi
-    { id: 'breaker',      type: 'breaker',        label: 'Breaker box',       x: 620,  y: 1434, w: 60,  h: 32,  solid: true },
     // Conference room: the all-hands bell sits on the table edge
     { id: 'bell',         type: 'meeting_bell',   label: 'All-hands bell',    x: 955,  y: 286,  w: 30,  h: 24,  solid: false },
     // Design studio

@@ -24,11 +24,7 @@ new_sqlite_classes = ["GameRoom"]
 # Example: "https://office-hours.pages.dev"
 ALLOWED_ORIGINS = ""
 
-# Test rooms: tools to pick your role, spawn dummies, skip time and so on
-# (server/dev/Sandbox.js). Only affects rooms created as test rooms.
-#   "true"  : an "Open a test room" button for everyone (handy locally:
-#             put ENABLE_SANDBOX=true in a .dev.vars file).
-#   "false" : off, unless you set a secret test code with
-#             `npx wrangler secret put SANDBOX_CODE`. Then a small "Testing?"
-#             field on the menu opens a test room for whoever types the code.
-ENABLE_SANDBOX = "false"
+# Test rooms: an "Open a test room" button on the menu, with tools to pick your
+# role, spawn dummies, skip time and so on (server/dev/Sandbox.js). Only affects
+# rooms created as test rooms. Set to "false" to switch the feature off.
+ENABLE_SANDBOX = "true"

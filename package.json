@@ -5,13 +5,16 @@
   "description": "Office-themed social deduction multiplayer game (Canvas + Cloudflare Workers/Durable Objects)",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "npm run items && node scripts/build.mjs",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "deploy:pages": "npm run build && wrangler pages deploy dist --project-name office-hours",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "items": "node scripts/build-items.mjs",
+    "pretest": "npm run items"
   },
   "devDependencies": {
+    "pngjs": "^7.0.0",
     "wrangler": "^4.0.0"
   }
 }

@@ -13,7 +13,6 @@ import { C2S, S2C, PFLAG } from '../shared/protocol.js';
 import { PHASE, INTERACT_RANGE, ROOM_CODE_LENGTH, ROLE } from '../shared/constants.js';
 import { distPointRect } from '../shared/mapBuilder.js';
 import { TASKS_BY_ID } from '../shared/tasks.js';
-import { EMOTES } from '../shared/emotes.js';
 
 const net = new Network();
 const game = new ClientGame();
@@ -25,7 +24,7 @@ const taskWindow = new TaskWindow({
   onSubmit: (answer) => net.send(C2S.MINIGAME, { answer }),
   onClose: () => { net.send(C2S.CANCEL); taskWindow.close(); },
 });
-const chat = { all: [], general: [], team: [], crew: [] };
+const chat = { all: [], team: [], crew: [] };
 let awaitingRoleReveal = false;
 let screen = 'menu';
 
@@ -60,8 +59,6 @@ const ui = new UI({
   onUse: () => interact(),
   onReport: () => report(),
   onDeskCheck: () => deskCheck(),
-  onTerminal: (open) => toggleTerminal(open),
-  onEmote: (id) => emote(id),
   onReturnToLobby: () => net.send(C2S.RETURN_TO_LOBBY),
   async onCopyCode() {
     const url = `${location.origin}${location.pathname}?room=${game.room?.code}`;
@@ -123,36 +120,16 @@ function deskCheck() {
   net.send(C2S.DESK_CHECK);
 }
 
-/** Open/close your desk terminal. The server decides; this just pre-checks for a quick hint. */
-function toggleTerminal(open = !game.terminal.open, channel) {
-  if (!open) {
-    game.terminal.open = false;
-    ui.renderTerminal(game);
-    return net.send(C2S.TERMINAL, { open: false });
-  }
-  if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
-  if (!game.atOwnDesk) return ui.toast('Your terminal is at your desk. Out here you can only emote (1-8).', 1800);
-  if (game.wifiDown) return ui.toast('No wifi. Your terminal is offline.', 1500);
-  if (channel) ui.terminalChannel = channel;
-  net.send(C2S.TERMINAL, { open: true });
-}
-
-function emote(id) {
-  if (!id || !(game.inLobby || (game.inOffice && game.phase === PHASE.PLAYING))) return;
-  net.send(C2S.EMOTE, { id });
-}
-
 const input = new Input(canvas, {
   onInteract: interact,
   onReport: () => report(),
   onDeskCheck: deskCheck,
-  // T opens/closes your desk terminal; B opens it straight on the back office (Management + snitches).
+  // T opens your main private chat (water cooler, or back office for Management); B the back office.
   onChatKey(which) {
     if (game.inLobby || !game.role) return;
-    if (which === 'team') return game.isTeam && toggleTerminal(true, 'team');
-    toggleTerminal();
+    if (which === 'team') return game.isTeam && ui.toggleChat('team');
+    ui.toggleChat(game.isManagement ? 'team' : 'crew');
   },
-  onEmote: (index) => emote(EMOTES[index]?.id),
   onCancel: () => net.send(C2S.CANCEL),
   onClick(sx, sy) {
     if (game.inLobby) return;
@@ -180,7 +157,6 @@ net.on(S2C.ROOM, (room) => {
   if (room.phase === PHASE.LOBBY && prev !== PHASE.LOBBY) {
     game.reset();
     ui.hideOverlays();
-    chat.general = [];
     chat.team = [];
     chat.crew = [];
   }
@@ -192,11 +168,11 @@ net.on(S2C.ROOM, (room) => {
 net.on(S2C.GAME_START, () => {
   game.reset();
   chat.all = [];
-  chat.general = [];
   chat.team = [];
   chat.crew = [];
   ui.resetMatchUi();
-  for (const ch of ['general', 'team', 'crew']) ui.renderChat(ch, chat[ch], game);
+  ui.renderChat('team', chat.team, game);
+  ui.renderChat('crew', chat.crew, game);
   awaitingRoleReveal = true;
   show('game');
 });
@@ -216,21 +192,8 @@ net.on(S2C.MEETING, (m) => {
   game.meeting = m.stage === 'closed' ? null : { ...m, receivedAt: performance.now() };
 });
 
-const TERMINAL_CLOSED = {
-  left_desk: 'You left your desk. Terminal closed.',
-  wifi: 'The wifi went down. Your terminal is offline.',
-};
-
-net.on(S2C.TERMINAL, (msg) => {
-  game.terminal.open = !!msg.open;
-  if (!msg.open && TERMINAL_CLOSED[msg.reason]) ui.toast(TERMINAL_CLOSED[msg.reason], 2000);
-  ui.renderTerminal(game);
-});
-
-net.on(S2C.EMOTE, (msg) => game.applyEmote(msg.playerId, msg.id, performance.now()));
-
 net.on(S2C.CHAT, (msg) => {
-  const channel = ['general', 'team', 'crew'].includes(msg.channel) ? msg.channel : 'all';
+  const channel = ['team', 'crew'].includes(msg.channel) ? msg.channel : 'all';
   if (msg.backlog) chat[channel] = msg.backlog;
   if (msg.line) {
     chat[channel].push(msg.line);
@@ -265,9 +228,6 @@ net.on(S2C.EVENT, (e) => {
     case 'left': return ui.feed(`${e.name} left the building.`);
     case 'break_start': return ui.feed(`${e.label} time. You're safe in the Break Room and outside.`, 'good');
     case 'break_end': return ui.feed(`${e.label} is over. Back to work.`);
-    case 'wifi_down': return ui.feed(`Someone flipped the breaker. The wifi is down for ${Math.round(e.ms / 1000)}s: nobody can be sent home. Go socialise!`, 'good');
-    case 'wifi_up': return ui.feed(e.why === 'breaker' ? 'Someone switched the power back on. Wifi is up.' : 'The wifi is back. Management is watching again.', 'bad');
-    case 'desk_check_cancelled': return ui.feed('The wifi went down mid desk check. It\u2019s called off.', 'good');
   }
 });
 

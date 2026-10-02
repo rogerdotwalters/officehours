@@ -1,217 +1,170 @@
 /**
- * Fridge Tetris UI. The server sent a fridge packed with coworkers' food and
- * your items; find where they fit. Placement rules come from the same shared
- * module the server uses to check the answer.
+ * Fridge UI: coworkers' food (pictures) sits on the shelves; drag things
+ * around to make room, then put your lunchbox and smoothie in.
  *
- * Controls: pick one of your items, then click/tap a cell to put it there (the
- * highlighted square of the item goes where you tap). Rotate with the button,
- * R, or right-click. Tap an item already in the fridge to take it back out.
+ * Collision uses each picture's solid pixels (shared/minigames/pixelMask.js),
+ * the same shapes the server checks the answer with. While you drag, the item's
+ * traced outline shows green where it fits and red where it doesn't. Dropped
+ * items settle downward until they rest on a shelf or on other food.
  */
-import { placedCells } from '../../shared/minigames/fridge.js';
-
-function el(tag, props = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (k === 'class') node.className = v;
-    else if (k === 'style') node.style.cssText = v;
-    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null && v !== false) node.setAttribute(k, v === true ? '' : v);
-  }
-  for (const c of children.flat()) if (c != null) node.append(c);
-  return node;
-}
+import { Fridge, SHELVES, FRIDGE_W, FRIDGE_H, CELL } from '../../shared/minigames/fridge.js';
+import { ITEMS_BY_ID, itemUrl } from '../../shared/minigames/items.js';
+import { edgesToPath } from '../../shared/minigames/pixelMask.js';
+import { el, svg, draggable, over } from './kit.js';
 
 export function mountFridge(root, puzzle, { submit, isTouch }) {
-  const { cols, rows, items, pieces } = puzzle;
-  const rot = pieces.map(() => 0);
-  const placed = pieces.map(() => null);      // { rot, x, y } or null
-  let selected = 0;
-  let hover = null;                           // { x, y }
-  let flashBad = null;                        // { x, y, until }
+  const pieces = puzzle.pieces.map((p, i) => ({ ...p, index: i, def: ITEMS_BY_ID.get(p.item), cx: p.x == null ? null : p.x / CELL, cy: p.y == null ? null : p.y / CELL }));
+  const fridge = new Fridge();
+  for (const p of pieces) if (p.cx != null) fridge.put(p.def, p.cx, p.cy, p.index);
+  let scale = 1;
   let sent = false;
 
-  // Which item owns each cell.
-  const owner = new Map();
-  items.forEach((it, i) => it.cells.forEach(([x, y]) => owner.set(`${x},${y}`, i)));
-
   // ---- DOM ----
-  const cells = [];
-  const grid = el('div', { class: 'fridge__grid', style: `--cols:${cols};--rows:${rows}`, role: 'grid', 'aria-label': 'Fridge shelves' });
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const c = el('button', { type: 'button', class: 'fcell', 'data-x': x, 'data-y': y, role: 'gridcell' });
-      c.addEventListener('pointerenter', () => { hover = { x, y }; render(); });
-      c.addEventListener('click', () => onCell(x, y));
-      c.addEventListener('contextmenu', (e) => { e.preventDefault(); rotateSelected(); });
-      grid.append(c);
-      cells.push(c);
-    }
+  const inside = el('div', { class: 'fz__inside' });
+  for (let i = 0; i < SHELVES.length - 1; i++) {
+    const s = SHELVES[i];
+    inside.append(el('div', { class: 'fz__shelf', 'data-y': s.y + s.h, 'data-h': SHELVES[i + 1].y - (s.y + s.h) }));
   }
-  grid.addEventListener('pointerleave', () => { hover = null; render(); });
-
-  // Labels for coworkers' food, laid over the grid on the longest straight run
-  // of the item's own cells so they never spill onto a neighbour.
-  const labels = el('div', { class: 'fridge__labels', 'aria-hidden': 'true' },
-    items.map((it) => {
-      const has = new Set(it.cells.map(([x, y]) => `${x},${y}`));
-      let best = { x: it.cells[0][0], y: it.cells[0][1], w: 1, h: 1 };
-      for (const [x, y] of it.cells) {
-        let w = 1; while (has.has(`${x + w},${y}`)) w++;
-        let h = 1; while (has.has(`${x},${y + h}`)) h++;
-        if (w > best.w) best = { x, y, w, h: 1 };
-        if (h > Math.max(best.w, best.h)) best = { x, y, w: 1, h };
-      }
-      return el('span', { title: it.label, style: `grid-column:${best.x + 1} / span ${best.w};grid-row:${best.y + 1} / span ${best.h}` },
-        it.food ?? it.label);
-    }));
-
-  const tray = el('div', { class: 'fridge__tray' });
-  const rotateBtn = el('button', { type: 'button', class: 'btn fridge__rotate', onclick: () => rotateSelected() },
-    'Rotate', isTouch ? null : el('kbd', {}, 'R'));
+  const box = el('div', { class: 'fz' }, el('div', { class: 'fz__light', 'aria-hidden': 'true' }), inside);
+  const tray = el('div', { class: 'fz__tray' });
   const doneBtn = el('button', { type: 'button', class: 'btn btn--primary', onclick: () => send() }, 'Close the door');
   const hint = el('p', { class: 'fridge__hint' });
-
-  root.append(el('div', { class: 'fridge' },
-    el('div', { class: 'fridge__box' },
-      el('div', { class: 'fridge__freezer', 'aria-hidden': 'true' }, el('span')),
-      el('div', { class: 'fridge__inside' }, grid, labels)),
+  root.append(el('div', { class: 'fzwrap' },
+    box,
     el('div', { class: 'fridge__side' },
       el('p', { class: 'fridge__label' }, 'Your things'),
       tray,
-      el('div', { class: 'fridge__controls' }, rotateBtn, doneBtn),
+      el('div', { class: 'fridge__controls' }, doneBtn),
       hint)));
 
-  // ---- Logic ----
-  const cellsFor = (i, r, x, y) => placedCells(pieces[i], r, x, y);
-  const occupiedByOthers = (except) => {
-    const set = new Set(owner.keys());
-    placed.forEach((p, i) => { if (p && i !== except) cellsFor(i, p.rot, p.x, p.y).forEach(([x, y]) => set.add(`${x},${y}`)); });
-    return set;
-  };
-  function fits(i, r, x, y) {
-    const taken = occupiedByOthers(i);
-    return cellsFor(i, r, x, y).every(([cx, cy]) => cx >= 0 && cy >= 0 && cx < cols && cy < rows && !taken.has(`${cx},${cy}`));
-  }
-  function pieceAt(x, y) {
-    return placed.findIndex((p, i) => p && cellsFor(i, p.rot, p.x, p.y).some(([cx, cy]) => cx === x && cy === y));
+  // One element per piece: the picture plus its traced collision outline.
+  for (const p of pieces) {
+    const d = p.def;
+    const label = p.yours ? d.name : `${p.owner}'s ${d.name}`;
+    p.node = el('div', { class: `fitem ${p.yours ? 'is-yours' : ''}`, title: label, 'aria-label': label, 'data-key': p.key },
+      el('img', { src: itemUrl(d), alt: '', draggable: 'false' }),
+      svg('svg', { class: 'fitem__outline', viewBox: `0 0 ${d.cols} ${d.rows}`, preserveAspectRatio: 'none' },
+        svg('path', { d: edgesToPath(d.edges) })));
+    attachDrag(p);
   }
 
-  function onCell(x, y) {
-    if (sent) return;
-    const there = pieceAt(x, y);
-    if (there !== -1) {               // pick it back up
-      rot[there] = placed[there].rot;
-      placed[there] = null;
-      selected = there;
-      return render();
+  // ---- Layout ----
+  function measure() {
+    const narrow = window.innerWidth < 560;
+    const chrome = 34;                                   // the fridge's own border and padding
+    const width = root.clientWidth || window.innerWidth - 40; // before the window is shown, guess
+    const availW = Math.min(width - chrome - (narrow ? 0 : 240), 400);
+    const availH = window.innerHeight - (narrow ? 330 : 170);
+    scale = Math.max(0.6, Math.min(availW / FRIDGE_W, availH / FRIDGE_H, 1.25));
+    inside.style.width = `${FRIDGE_W * scale}px`;
+    inside.style.height = `${FRIDGE_H * scale}px`;
+    for (const shelf of inside.querySelectorAll('.fz__shelf')) {
+      shelf.style.top = `${shelf.dataset.y * scale}px`;
+      shelf.style.height = `${shelf.dataset.h * scale}px`;
     }
-    if (selected == null) return;
-    if (fits(selected, rot[selected], x, y)) {
-      placed[selected] = { rot: rot[selected], x, y };
-      const next = placed.findIndex((p) => !p);
-      selected = next === -1 ? null : next;
-    } else {
-      flashBad = { x, y, until: performance.now() + 450 };
-      setTimeout(render, 460);
-    }
-    render();
+    layout();
   }
 
-  function rotateSelected() {
-    if (selected == null || sent) return;
-    rot[selected] = (rot[selected] + 1) % 4;
-    render();
+  function sizeNode(p) {
+    p.node.style.width = `${p.def.cols * CELL * scale}px`;
+    p.node.style.height = `${p.def.rows * CELL * scale}px`;
+    p.node.querySelector('img').style.width = `${p.def.w * scale}px`;
+    p.node.querySelector('img').style.height = `${p.def.h * scale}px`;
+  }
+
+  function layout() {
+    for (const p of pieces) {
+      sizeNode(p);
+      if (p.cx != null) {
+        if (p.node.parentNode !== inside) inside.append(p.node);
+        p.node.style.left = `${p.cx * CELL * scale}px`;
+        p.node.style.top = `${p.cy * CELL * scale}px`;
+      } else {
+        if (p.node.parentNode !== tray) tray.append(p.node);
+        p.node.style.left = '';
+        p.node.style.top = '';
+      }
+    }
+    const left = pieces.filter((p) => p.yours && p.cx == null).length;
+    doneBtn.disabled = left > 0 || sent;
+    doneBtn.textContent = sent ? 'Closing\u2026' : 'Close the door';
+    tray.classList.toggle('is-empty', left === 0);
+    hint.textContent = left === 0
+      ? 'All in. Close the door.'
+      : `Drag ${isTouch ? 'with your finger' : 'with the mouse'}. Coworkers\u2019 food can be moved too: slide things together, tuck them into each other\u2019s gaps or stack them.`;
+  }
+
+  // ---- Dragging ----
+  function attachDrag(p) {
+    let grab = null;      // where on the item you grabbed it, in px
+    let target = null;    // { cx, cy, ok } while over the fridge
+    draggable(p.node, {
+      onStart(e) {
+        if (sent) return false;
+        const r = p.node.getBoundingClientRect();
+        grab = { x: e.clientX - r.left, y: e.clientY - r.top };
+        if (p.cx != null) fridge.take(p.def, p.cx, p.cy, p.index);
+        // Float above everything while dragging.
+        document.body.append(p.node);
+        p.node.classList.add('is-floating');
+        place(e);
+        return true;
+      },
+      onMove(e) { place(e); return true; },
+      onEnd(e) {
+        p.node.classList.remove('is-floating', 'is-ok', 'is-bad');
+        p.node.style.position = '';
+        if (target?.ok) {
+          p.cx = target.cx;
+          p.cy = fridge.settle(p.def, target.cx, target.cy, p.index);
+        } else if (!p.yours || target) {
+          // Coworkers' food can't leave the fridge; a bad spot snaps back.
+        } else {
+          p.cx = null; p.cy = null; // your food, dropped outside: back to the tray
+        }
+        if (p.cx != null) fridge.put(p.def, p.cx, p.cy, p.index);
+        target = null;
+        layout();
+      },
+    });
+
+    function place(e) {
+      const rect = inside.getBoundingClientRect();
+      const px = e.clientX - grab.x, py = e.clientY - grab.y;
+      p.node.style.position = 'fixed';
+      if (over(inside, e.clientX, e.clientY, 20)) {
+        const cx = Math.round((px - rect.left) / (CELL * scale));
+        const cy = Math.round((py - rect.top) / (CELL * scale));
+        target = { cx, cy, ok: fridge.fits(p.def, cx, cy, p.index) };
+        p.node.style.left = `${rect.left + cx * CELL * scale}px`;
+        p.node.style.top = `${rect.top + cy * CELL * scale}px`;
+      } else {
+        target = null;
+        p.node.style.left = `${px}px`;
+        p.node.style.top = `${py}px`;
+      }
+      p.node.classList.toggle('is-ok', !!target?.ok);
+      p.node.classList.toggle('is-bad', !!target && !target.ok);
+    }
   }
 
   function send() {
-    if (sent || placed.some((p) => !p)) return;
+    if (sent || pieces.some((p) => p.cx == null)) return;
     sent = true;
-    submit(placed.map((p, i) => ({ piece: i, rot: p.rot, x: p.x, y: p.y })));
-    render();
-    setTimeout(() => { sent = false; render(); }, 1500); // if the server says no, let them retry
+    submit({ positions: Object.fromEntries(pieces.map((p) => [p.key, { x: p.cx * CELL, y: p.cy * CELL }])) });
+    layout();
+    setTimeout(() => { sent = false; layout(); }, 1500);
   }
 
-  // ---- Drawing ----
-  function render() {
-    const yours = new Map();
-    placed.forEach((p, i) => { if (p) cellsFor(i, p.rot, p.x, p.y).forEach(([x, y]) => yours.set(`${x},${y}`, i)); });
-
-    // Ghost preview of the selected piece
-    const ghost = new Set();
-    let ghostOk = false;
-    const bad = flashBad && performance.now() < flashBad.until ? flashBad : null;
-    const at = bad ?? (!isTouch ? hover : null);
-    if (selected != null && at) {
-      ghostOk = !bad && fits(selected, rot[selected], at.x, at.y);
-      for (const [x, y] of cellsFor(selected, rot[selected], at.x, at.y)) ghost.add(`${x},${y}`);
-    }
-
-    for (const c of cells) {
-      const x = Number(c.dataset.x), y = Number(c.dataset.y), key = `${x},${y}`;
-      const it = owner.get(key);
-      const mine = yours.get(key);
-      const groupOf = (kx, ky) => {
-        const k = `${kx},${ky}`;
-        return owner.has(k) ? `o${owner.get(k)}` : yours.has(k) ? `y${yours.get(k)}` : null;
-      };
-      const g = groupOf(x, y);
-      c.className = 'fcell';
-      c.style.background = it != null ? items[it].color : mine != null ? pieces[mine].color : '';
-      if (mine != null) c.classList.add('is-yours');
-      if (it != null) c.classList.add('is-food');
-      if (g) {
-        // Thicker edges where an item ends, so items read as single shapes.
-        if (groupOf(x, y - 1) !== g) c.classList.add('e-t');
-        if (groupOf(x + 1, y) !== g) c.classList.add('e-r');
-        if (groupOf(x, y + 1) !== g) c.classList.add('e-b');
-        if (groupOf(x - 1, y) !== g) c.classList.add('e-l');
-      }
-      if (ghost.has(key)) c.classList.add(ghostOk ? 'ghost-ok' : 'ghost-bad');
-      c.setAttribute('aria-label', it != null ? items[it].label : mine != null ? pieces[mine].label : 'Empty space');
-    }
-
-    tray.replaceChildren(...pieces.map((p, i) => {
-      const shape = placedCells(p, rot[i], 0, 0);
-      const minX = Math.min(...shape.map((s) => s[0]));
-      const norm = shape.map(([x, y]) => [x - minX, y]);
-      const w = Math.max(...norm.map((s) => s[0])) + 1, h = Math.max(...norm.map((s) => s[1])) + 1;
-      const anchor = norm[0];
-      return el('button', {
-        type: 'button',
-        class: `fpiece ${selected === i ? 'is-selected' : ''} ${placed[i] ? 'is-placed' : ''}`,
-        'aria-pressed': String(selected === i),
-        onclick: () => {
-          if (sent) return;
-          if (placed[i]) { rot[i] = placed[i].rot; placed[i] = null; }
-          selected = i;
-          render();
-        },
-      },
-      el('span', { class: 'fpiece__shape', style: `--w:${w};--h:${h}` },
-        norm.map(([x, y]) => el('i', {
-          class: x === anchor[0] && y === anchor[1] ? 'is-anchor' : '',
-          style: `grid-column:${x + 1};grid-row:${y + 1};background:${p.color}`,
-        }))),
-      el('span', { class: 'fpiece__label' }, p.label, el('small', {}, placed[i] ? 'In the fridge' : selected === i ? 'Selected' : 'Tap to pick')));
-    }));
-
-    const allIn = placed.every(Boolean);
-    rotateBtn.disabled = selected == null || sent;
-    doneBtn.disabled = !allIn || sent;
-    doneBtn.textContent = sent ? 'Closing\u2026' : 'Close the door';
-    hint.textContent = allIn
-      ? 'Everything fits. Close the door.'
-      : selected == null
-        ? 'Pick one of your things.'
-        : `${isTouch ? 'Tap' : 'Click'} where ${pieces[selected].label.toLowerCase()} goes. The marked square lands where you ${isTouch ? 'tap' : 'click'}.`;
-  }
-
-  render();
+  const ro = new ResizeObserver(() => measure());
+  ro.observe(root);
+  measure();
   return {
-    destroy() { root.replaceChildren(); },
-    onKey(e) {
-      if (e.code === 'KeyR') { e.preventDefault(); rotateSelected(); }
-      if (e.code === 'Enter') { e.preventDefault(); send(); }
+    destroy() {
+      ro.disconnect();
+      for (const p of pieces) p.node.remove();
+      root.replaceChildren();
     },
+    onKey(e) { if (e.code === 'Enter') { e.preventDefault(); send(); } },
   };
 }

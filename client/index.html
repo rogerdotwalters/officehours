@@ -84,9 +84,7 @@
             <p>One of you is secretly <strong>Management</strong>, maybe helped by a few secret <strong>snitches</strong>. Everyone else is a worker.</p>
             <p>Tasks arrive one at a time as the workday goes on. Finish them all, then clock out at the time clock in the Lobby. If enough workers clock out before five o'clock, workers win.</p>
             <p>Management sends people home by catching them away from their desks, or by calling a desk check: when the countdown ends, anyone not at their own desk goes home.</p>
-            <p>You can only see what's in your line of sight. Walls block your view, so watch the corners.</p>
-            <p>Out on the floor nobody talks: you can only <strong>emote</strong>, and only people who can see you notice. To talk, sit at your own desk and open your <strong>terminal</strong>. It has <strong>#general</strong> for everyone, the <strong>water cooler</strong> for workers and the <strong>back office</strong> for Management. Snitches work like everyone else but sit in both private channels, passing on what they hear, and win with Management.</p>
-            <p>The <strong>breaker box</strong> at the end of the west hallway kills the wifi. With no wifi, nobody can be reported or desk-checked, but terminals are offline too. Errands finished during an outage fill the team's <strong>social meter</strong>, and a full meter wins the day for the workers.</p>
+            <p>During the day, workers can talk in the <strong>water cooler</strong> chat and Management in the <strong>back office</strong>. Snitches work like everyone else but sit in both chats, passing on what they hear, and win with Management.</p>
             <p>The day has breaks. On a break you can't be reported in the Break Room or anywhere outside, Management can't call desk checks, and lunch tasks can finally be done.</p>
             <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
           </details>
@@ -128,10 +126,6 @@
       <div class="hud-corner">
         <div id="hud-role" class="role-tag"></div>
         <canvas id="hud-minimap" class="minimap" aria-hidden="true"></canvas>
-        <div id="hud-wifi" class="hud-pill wifi-pill"></div>
-        <div id="hud-social" class="hud-pill hud-pill--quiet social-pill" title="Social meter: errands done during wifi outages" hidden>
-          <span>Social</span><span class="meter"><span class="meter__fill"></span></span><span class="social-pill__count"></span>
-        </div>
       </div>
 
       <div id="hud-deskcheck" class="deskcheck" role="alert" hidden>
@@ -157,33 +151,43 @@
 
       <!-- Actions: bottom-right thumb zone on phones, bottom-right corner on desktop -->
       <div class="actions">
-        <button id="act-terminal" class="act act--terminal" hidden><span class="act__label">Terminal <kbd>T</kbd></span><span class="act__sub"></span></button>
+        <button id="act-crew" class="act act--crew" hidden><span class="act__label">Water cooler <kbd>T</kbd></span><span id="crew-unread" class="count" hidden></span></button>
+        <button id="act-team" class="act act--team" hidden><span class="act__label">Back office <kbd>B</kbd></span><span id="team-unread" class="count" hidden></span></button>
         <button id="act-deskcheck" class="act act--deskcheck" hidden><span class="act__label">Desk check <kbd>F</kbd></span><span class="act__sub"></span></button>
         <button id="act-report" class="act act--report" hidden><span class="act__label">Report <kbd>R</kbd></span><span class="act__sub"></span></button>
         <button id="act-use" class="act act--use" hidden>Use</button>
       </div>
 
-      <!-- In-person emotes: the only way to "talk" out on the floor (keys 1-8). Built by UI.js. -->
-      <div id="hud-emotes" class="emotes" role="toolbar" aria-label="Emotes" hidden></div>
-
-      <!-- Desk terminal: the only way to talk during the workday. Needs your desk and wifi. -->
-      <section id="terminal" class="terminal" aria-labelledby="terminal-title" hidden>
-        <header class="terminal__bar">
-          <h3 id="terminal-title">OfficeNet Messenger</h3>
-          <button class="terminal__close" id="terminal-close" aria-label="Close terminal">×</button>
+      <!-- Private chat panels. Only one is open at a time. -->
+      <section id="crew-chat" class="backoffice backoffice--crew" aria-labelledby="crew-title" hidden>
+        <header class="backoffice__head">
+          <h3 id="crew-title">Water cooler</h3>
+          <p class="backoffice__sub">Workers only. Management can't see this, but snitches can.</p>
+          <div class="backoffice__btns">
+            <button class="btn btn--small btn--ghost" data-switch-chat="team" hidden>Back office</button>
+            <button class="btn btn--small btn--ghost" data-close-chat aria-label="Close water cooler">Close</button>
+          </div>
         </header>
-        <nav class="terminal__tabs" role="tablist" aria-label="Channels">
-          <button role="tab" data-channel="general" aria-selected="true">#general <span class="count" hidden></span></button>
-          <button role="tab" data-channel="crew" aria-selected="false" hidden>Water cooler <span class="count" hidden></span></button>
-          <button role="tab" data-channel="team" aria-selected="false" hidden>Back office <span class="count" hidden></span></button>
-        </nav>
-        <p class="terminal__sub"></p>
-        <ol class="terminal__log chat__log" data-chat-log="general"></ol>
-        <ol class="terminal__log chat__log" data-chat-log="crew" hidden></ol>
-        <ol class="terminal__log chat__log" data-chat-log="team" hidden></ol>
-        <form class="terminal__form" id="terminal-form">
-          <span aria-hidden="true">&gt;</span>
-          <input maxlength="140" autocomplete="off" spellcheck="false" placeholder="type a message, Esc to close" aria-label="Terminal message" enterkeyhint="send" />
+        <ol class="chat__log" data-chat-log="crew"></ol>
+        <form class="chat__form" data-chat-form="crew">
+          <input maxlength="140" placeholder="Compare notes with your coworkers" aria-label="Water cooler message" enterkeyhint="send" />
+          <button class="btn btn--small">Send</button>
+        </form>
+      </section>
+
+      <section id="team-chat" class="backoffice" aria-labelledby="team-title" hidden>
+        <header class="backoffice__head">
+          <h3 id="team-title">Back office</h3>
+          <p class="backoffice__sub">Only Management and snitches can see this.</p>
+          <div class="backoffice__btns">
+            <button class="btn btn--small btn--ghost" data-switch-chat="crew" hidden>Water cooler</button>
+            <button class="btn btn--small btn--ghost" data-close-chat aria-label="Close back office">Close</button>
+          </div>
+        </header>
+        <ol class="chat__log" data-chat-log="team"></ol>
+        <form class="chat__form" data-chat-form="team">
+          <input maxlength="140" placeholder="Whisper to the team" aria-label="Back office message" enterkeyhint="send" />
+          <button class="btn btn--small">Send</button>
         </form>
       </section>
     </div>

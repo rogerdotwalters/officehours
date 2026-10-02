@@ -14,7 +14,7 @@ import { RateLimiter } from './net/RateLimiter.js';
 import { C2S, S2C, encode, decode } from '../shared/protocol.js';
 import { TICK_MS, MAX_MESSAGE_BYTES } from '../shared/constants.js';
 
-const CHAT_CHANNELS = new Set(['all', 'general', 'team', 'crew']);
+const CHAT_CHANNELS = new Set(['all', 'team', 'crew']);
 
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000;
 const MAX_FLOOD_STRIKES = 20;
@@ -158,8 +158,6 @@ export class GameRoom {
       case C2S.REPORT:          return g.handleReport(player, msg.targetId, now);
       case C2S.VOTE:            return g.handleVote(player, msg.targetId, now);
       case C2S.CHAT:            return g.handleChat(player, msg.text, CHAT_CHANNELS.has(msg.channel) ? msg.channel : 'all', now);
-      case C2S.TERMINAL:        return g.handleTerminal(player, msg.open, now);
-      case C2S.EMOTE:           return g.handleEmote(player, msg.id, now);
       case C2S.SETTINGS:        return g.handleSettings(player, msg.settings);
       case C2S.DESK_CHECK:      return g.handleDeskCheck(player, now);
       case C2S.MINIGAME:        return g.handleMinigame(player, msg.answer, now);

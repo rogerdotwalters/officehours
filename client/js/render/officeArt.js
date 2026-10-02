@@ -421,28 +421,6 @@ const OBJECTS = {
     ctx.fillStyle = '#ffffff'; ctx.font = '700 12px Fredoka, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('\u267b', o.x + o.w / 2, o.y + o.h / 2);
   },
-  breaker: (ctx, o, state = {}) => {
-    box(ctx, o, '#8e9aa8', '#2c3645', 3);
-    // Lightning bolt
-    ctx.fillStyle = '#ffd52e';
-    const bx = o.x + 12, by = o.y + o.h / 2;
-    ctx.beginPath();
-    ctx.moveTo(bx + 2, by - 10); ctx.lineTo(bx - 4, by + 1); ctx.lineTo(bx, by + 1);
-    ctx.lineTo(bx - 2, by + 10); ctx.lineTo(bx + 5, by - 2); ctx.lineTo(bx + 1, by - 2);
-    ctx.closePath(); ctx.fill();
-    // Switches: thrown down when the power is cut
-    ctx.fillStyle = '#2c3645';
-    for (let i = 0; i < 3; i++) {
-      const sx = o.x + 23 + i * 9;
-      ctx.fillRect(sx, o.y + 6, 6, o.h - 12);
-      ctx.fillStyle = state.wifiDown ? '#cf3b31' : '#e9eef2';
-      ctx.fillRect(sx, state.wifiDown ? o.y + o.h - 14 : o.y + 6, 6, 8);
-      ctx.fillStyle = '#2c3645';
-    }
-    // Status light (blinks red during an outage)
-    const on = !state.wifiDown || Math.floor((state.now ?? 0) / 300) % 2 === 0;
-    circle(ctx, o.x + o.w - 6, o.y + 6, 3, state.wifiDown ? (on ? '#ff4b3e' : '#5a1d19') : '#54c985');
-  },
   desk: (ctx, o) => {
     box(ctx, o, '#b98b5e', '#5e4127', 5);
     ctx.fillStyle = '#1d2742'; ctx.fillRect(o.x + o.w / 2 - 20, o.y + 5, 40, 8);        // monitor
@@ -506,9 +484,8 @@ export function drawDecor(ctx, map) {
   for (const d of map.decor) (DECOR[d.kind] || fallback)(ctx, d);
 }
 
-/** `state` carries live world state some props reflect (e.g. { wifiDown, now }). */
-export function drawInteractable(ctx, o, state) {
-  (OBJECTS[o.type] || fallback)(ctx, o, state);
+export function drawInteractable(ctx, o) {
+  (OBJECTS[o.type] || fallback)(ctx, o);
 }
 
 function fallback(ctx, o) {

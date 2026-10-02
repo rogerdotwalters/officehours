@@ -1,6 +1,6 @@
 /**
  * UI — every DOM element on top of the canvas: menu, lobby folder (people,
- * house rules, chat), in-game HUD (to-do note, punch clock, actions, desk terminal, emotes),
+ * house rules, chat), in-game HUD (to-do note, punch clock, actions, back office),
  * role memo, meeting, game over, toasts and the event feed.
  *
  * User-supplied text (names, chat) is always inserted with textContent, never
@@ -9,22 +9,15 @@
 import { COLORS, PHASE, STATUS, ROLE } from '../../shared/constants.js';
 import { TASKS_BY_ID, TARGET_HINT, rarityOf } from '../../shared/tasks.js';
 import { SETTINGS_SPEC, effectiveSnitches } from '../../shared/settings.js';
-import { EMOTES } from '../../shared/emotes.js';
 
 const $ = (id) => document.getElementById(id);
 const PENDING_MS = 1500;
 const EMPTY_CHAT = {
   all: 'No messages yet.',
-  general: 'No messages yet. Everyone with an open terminal reads this, Management included.',
   team: 'Nothing yet. Tip each other off about who is where.',
   crew: 'Nothing yet. Compare notes on who is acting suspicious, but remember snitches are listening.',
 };
-const CHANNEL_SUB = {
-  general: 'Everyone in the office.',
-  crew: "Workers only. Management can't see this, but snitches can.",
-  team: 'Only Management and snitches can see this.',
-};
-const TERMINAL_CHANNELS = ['general', 'crew', 'team'];
+const CHAT_PANEL = { team: 'team-chat', crew: 'crew-chat' }; // how long a host's local setting edit wins over the last server echo
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -63,8 +56,7 @@ export class UI {
     this.toastTimer = null;
     this.pending = {};          // host's in-flight setting edits: key -> { value, at }
     this.lobbyTab = 'people';
-    this.unread = { all: 0, general: 0, team: 0, crew: 0 };
-    this.terminalChannel = 'general';
+    this.unread = { all: 0, team: 0, crew: 0 };
     this.settingRefs = null;
 
     // ---- Menu ----
@@ -86,7 +78,7 @@ export class UI {
     this.setFolderOpen(!this.compact());
     this.buildSettingsForm();
 
-    // ---- Chat forms (lobby + meeting): data-chat-form="all" ----
+    // ---- Chat forms: data-chat-form="all" | "team" ----
     for (const form of document.querySelectorAll('[data-chat-form]')) {
       form.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -101,28 +93,11 @@ export class UI {
     $('act-use').addEventListener('click', () => this.h.onUse());
     $('act-report').addEventListener('click', () => this.h.onReport());
     $('act-deskcheck').addEventListener('click', () => this.h.onDeskCheck());
-    // ---- Desk terminal ----
-    $('act-terminal').addEventListener('click', () => this.h.onTerminal());
-    $('terminal-close').addEventListener('click', () => this.h.onTerminal(false));
-    for (const tab of document.querySelectorAll('#terminal [data-channel]')) {
-      tab.addEventListener('click', () => this.selectChannel(tab.dataset.channel));
-    }
-    $('terminal-form').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = e.target.querySelector('input');
-      const text = input.value.trim();
-      if (text) this.h.onChat(text, this.terminalChannel);
-      input.value = '';
-    });
-    $('terminal-form').querySelector('input').addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); this.h.onTerminal(false); }
-    });
-
-    // ---- Emotes (keys 1-8, or these buttons) ----
-    $('hud-emotes').replaceChildren(...EMOTES.map((em, i) => el('button', {
-      class: 'emote-btn', type: 'button', title: em.label, 'aria-label': em.label,
-      onclick: () => this.h.onEmote(em.id),
-    }, em.glyph, el('kbd', {}, String(i + 1)))));
+    $('act-team').addEventListener('click', () => this.toggleChat('team'));
+    $('act-crew').addEventListener('click', () => this.toggleChat('crew'));
+    for (const btn of document.querySelectorAll('[data-close-chat]')) btn.addEventListener('click', () => this.closeChats());
+    // Snitches sit in both chats; let them hop between them without closing first.
+    for (const btn of document.querySelectorAll('[data-switch-chat]')) btn.addEventListener('click', () => this.toggleChat(btn.dataset.switchChat, true));
     $('meeting-skip').addEventListener('click', () => this.h.onVote('skip'));
     $('over-lobby').addEventListener('click', () => this.h.onReturnToLobby());
   }
@@ -152,17 +127,15 @@ export class UI {
 
   hideOverlays() {
     for (const id of ['overlay-role', 'overlay-meeting', 'overlay-over']) $(id).hidden = true;
-    this.closeTerminalUi();
+    this.closeChats();
   }
 
   /** Called when a new match starts. */
   resetMatchUi() {
-    this.unread.general = 0;
     this.unread.team = 0;
     this.unread.crew = 0;
-    this.terminalChannel = 'general';
     this.renderUnread();
-    this.closeTerminalUi();
+    this.closeChats();
     $('hud-tasks').open = !this.compact();
     this.keys = {};
   }
@@ -312,57 +285,31 @@ export class UI {
   /** A new line arrived on a channel that may not be on screen. */
   noteUnread(channel, game) {
     if (channel === 'all' && game.inLobby && !(this.lobbyTab === 'chat' && $('lobby-panel').dataset.open === 'true')) this.unread.all++;
-    if (TERMINAL_CHANNELS.includes(channel) && ($('terminal').hidden || this.terminalChannel !== channel)) this.unread[channel]++;
+    if (CHAT_PANEL[channel] && $(CHAT_PANEL[channel]).hidden) this.unread[channel]++;
     this.renderUnread();
   }
 
   renderUnread() {
-    setText($('lobby-unread'), String(this.unread.all));
-    setHidden($('lobby-unread'), this.unread.all === 0);
-    for (const ch of TERMINAL_CHANNELS) {
-      const badge = document.querySelector(`#terminal [data-channel="${ch}"] .count`);
-      setText(badge, String(this.unread[ch]));
-      setHidden(badge, this.unread[ch] === 0);
+    for (const [id, n] of [['lobby-unread', this.unread.all], ['team-unread', this.unread.team], ['crew-unread', this.unread.crew]]) {
+      setText($(id), String(n));
+      setHidden($(id), n === 0);
     }
   }
 
-  /** Show the desk terminal if it's open, with the tabs this player's role can read. */
-  renderTerminal(game) {
-    const panel = $('terminal');
-    const wasHidden = panel.hidden;
-    setHidden(panel, !game.terminal.open);
-    if (!game.terminal.open) {
-      // Give the keyboard back to movement.
-      if (panel.contains(document.activeElement)) document.activeElement.blur();
-      return;
-    }
-    const readable = game.terminalChannels();
-    if (!readable.includes(this.terminalChannel)) this.terminalChannel = 'general';
-    for (const tab of panel.querySelectorAll('[data-channel]')) setHidden(tab, !readable.includes(tab.dataset.channel));
-    // A lone #general tab isn't worth a tab bar.
-    setHidden(panel.querySelector('.terminal__tabs'), readable.length < 2);
-    this.selectChannel(this.terminalChannel, wasHidden);
-  }
-
-  selectChannel(channel, focus = true) {
-    this.terminalChannel = channel;
-    const panel = $('terminal');
-    for (const tab of panel.querySelectorAll('[data-channel]')) tab.setAttribute('aria-selected', String(tab.dataset.channel === channel));
-    for (const log of panel.querySelectorAll('[data-chat-log]')) setHidden(log, log.dataset.chatLog !== channel);
-    setText(panel.querySelector('.terminal__sub'), CHANNEL_SUB[channel]);
-    const input = panel.querySelector('input');
-    input.placeholder = `message ${channel === 'general' ? '#general' : channel === 'crew' ? 'the water cooler' : 'the back office'}, Esc to close`;
+  /** Open or close a private chat panel ('team' = back office, 'crew' = water cooler). */
+  toggleChat(channel, open = $(CHAT_PANEL[channel]).hidden) {
+    for (const [ch, id] of Object.entries(CHAT_PANEL)) setHidden($(id), !(open && ch === channel));
+    if (!open) return;
     this.unread[channel] = 0;
     this.renderUnread();
-    const log = panel.querySelector(`[data-chat-log="${channel}"]`);
+    const panel = $(CHAT_PANEL[channel]);
+    const log = panel.querySelector('.chat__log');
     log.scrollTop = log.scrollHeight;
-    if (focus && !this.isTouch) input.focus();
+    if (!this.isTouch) panel.querySelector('input').focus();
   }
 
-  closeTerminalUi() {
-    const panel = $('terminal');
-    if (panel.contains(document.activeElement)) document.activeElement.blur();
-    setHidden(panel, true);
+  closeChats() {
+    for (const id of Object.values(CHAT_PANEL)) setHidden($(id), true);
   }
 
   // ===========================================================================
@@ -393,19 +340,6 @@ export class UI {
     setText($('hud-room'), where);
     const progress = room?.progress;
     setText($('hud-progress'), progress ? `${progress.home} of ${progress.goal} clocked out` : '');
-
-    // Social meter
-    const social = $('hud-social');
-    setHidden(social, !progress);
-    if (progress) {
-      social.querySelector('.meter__fill').style.width = `${Math.min(100, (progress.social / progress.socialGoal) * 100)}%`;
-      setText(social.querySelector('.social-pill__count'), `${progress.social}/${progress.socialGoal}`);
-    }
-
-    // Wifi
-    const wifi = game.wifiInfo(now);
-    setText($('hud-wifi'), !wifi ? '' : wifi.down ? `Wifi down ${formatClock(wifi.msLeft)}` : 'Wifi on');
-    $('hud-wifi').classList.toggle('is-down', !!wifi?.down);
 
     // Desk check banner
     const dcLeft = game.deskCheckLeft(now);
@@ -585,10 +519,9 @@ export class UI {
     if (showReport) {
       const cd = Math.max(0, (self.reportReadyAt ?? 0) - now);
       const target = game.reportableTargets().find((t) => t.inRange);
-      report.disabled = game.wifiDown || cd > 0 || !target;
+      report.disabled = cd > 0 || !target;
       setText(report.querySelector('.act__sub'),
-        game.wifiDown ? 'wifi is down'
-          : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody in sight');
+        cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody in range');
     }
 
     // Desk check (Management)
@@ -600,26 +533,29 @@ export class UI {
       const cd = self.deskCheckReadyAt == null ? Infinity : Math.max(0, self.deskCheckReadyAt - now);
       const brk = game.breakInfo(now);
       const breakSoon = brk.next && brk.next.startMs - brk.elapsed < game.settings.deskCheckWarning * 1000;
-      dc.disabled = active || cd > 0 || !!brk.current || !!breakSoon || game.wifiDown;
+      dc.disabled = active || cd > 0 || !!brk.current || !!breakSoon;
       setText(dc.querySelector('.act__sub'),
         active || cd === Infinity ? 'underway'
-          : game.wifiDown ? 'wifi is down'
           : brk.current ? 'not on a break'
             : breakSoon ? `${brk.next.label.toLowerCase()} soon`
               : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : `${game.settings.deskCheckWarning}s warning`);
     }
 
-    // Desk terminal: shows up while you're sitting at your own desk.
-    const term = $('act-terminal');
-    const showTerm = working && !roleShowing && game.atOwnDesk && !game.terminal.open;
-    setHidden(term, !showTerm);
-    if (showTerm) {
-      term.disabled = game.wifiDown;
-      setText(term.querySelector('.act__sub'), game.wifiDown ? 'offline: no wifi' : '');
+    // Private chats: back office (Management + snitches), water cooler (workers + snitches)
+    const chatsOpen = (playing || game.phase === PHASE.MEETING) && !roleShowing && !!game.role;
+    const showTeam = chatsOpen && game.isTeam;
+    const showCrew = chatsOpen && !game.isManagement;
+    setHidden($('act-team'), !showTeam);
+    setHidden($('act-crew'), !showCrew);
+    if (!showTeam) setHidden($('team-chat'), true);
+    if (!showCrew) setHidden($('crew-chat'), true);
+    for (const btn of document.querySelectorAll('[data-switch-chat]')) setHidden(btn, !game.isSnitch);
+    // Unread badges for the *other* chat show on the switch button too.
+    for (const btn of document.querySelectorAll('[data-switch-chat]')) {
+      const n = this.unread[btn.dataset.switchChat];
+      const label = `${btn.dataset.switchChat === 'team' ? 'Back office' : 'Water cooler'}${n ? ` (${n})` : ''}`;
+      setText(btn, label);
     }
-
-    // Emotes: the only way to "talk" out on the floor.
-    setHidden($('hud-emotes'), !working || roleShowing || game.terminal.open);
   }
 
   // ===========================================================================
@@ -635,18 +571,18 @@ export class UI {
       title = "You're Management";
       body = 'Catch workers away from their desks and Report them, or call a desk check and send home anyone who doesn\u2019t make it back in time. Pretend to do your tasks so nobody suspects you.';
       teamLine = snitchMates.length
-        ? `Your snitches: ${listNames(snitchMates)}. Coordinate in the back office on your desk terminal.`
+        ? `Your snitches: ${listNames(snitchMates)}. Coordinate in the back office.`
         : "No snitches today. You're on your own.";
     } else if (role === ROLE.SNITCH) {
       title = "You're a snitch";
-      body = 'Work like everyone else, but you\u2019re on Management\u2019s side. At your desk terminal you can read and post in both the workers\u2019 water cooler and Management\u2019s back office, so pass on what you hear. You win if Management wins. Snitches can\u2019t clock out.';
+      body = 'Work like everyone else, but you\u2019re on Management\u2019s side. You can read and post in both the workers\u2019 water cooler and Management\u2019s back office, so pass on what you hear. You win if Management wins. Snitches can\u2019t clock out.';
       teamLine = [
         mgmtMate ? `Management is ${game.nameOf(mgmtMate.id)}.` : '',
         snitchMates.length ? `Fellow snitches: ${listNames(snitchMates)}.` : '',
       ].filter(Boolean).join(' ');
     } else {
       title = "You're a worker";
-      body = 'Tasks arrive one at a time through the day. Finish them all, then clock out at the time clock in the Lobby. Management is watching, and might call a desk check at any moment. Out on the floor you can only emote. To talk, open the terminal at your desk (it needs wifi). The water cooler channel is for workers, but careful: snitches are listening.';
+      body = 'Tasks arrive one at a time through the day. Finish them all, then clock out at the time clock in the Lobby. Management is watching, and might call a desk check at any moment. Talk to other workers at the water cooler, but careful: snitches are listening.';
     }
     setText($('role-to'), game.me?.name ?? 'You');
     setText($('role-title'), title);
@@ -749,7 +685,7 @@ export class UI {
     setHidden($('over-lobby'), !game.isHost);
     setHidden($('over-wait'), game.isHost);
     $('overlay-meeting').hidden = true;
-    this.closeTerminalUi();
+    this.closeChats();
     $('overlay-over').hidden = false;
   }
 

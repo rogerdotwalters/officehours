@@ -102,7 +102,7 @@ test('tasks: must stay in range for the full duration', () => {
   const w = workers[0];
   const now = 1_000_000 + START_FREEZE_MS + 10;
   const desk = game.office.getInteractable(w.deskId);
-  w.tasks = [{ id: 'emails', done: false }];
+  w.tasks = [{ id: 'tps', done: false }];
 
   game.handleInteract(w, w.deskId, now);
   assert.ok(w.activeTask, 'desk task started');
@@ -340,8 +340,7 @@ test('snitches: count clamps to keep 2 real workers; private team chat', () => {
   assert.deepEqual(selfOf(snitches[0]).team.map((t) => t.id).sort(), [mgmt.id, snitches[1].id].sort());
   assert.deepEqual(selfOf(workers[0]).team, []);
 
-  // Back-office chat reaches only the team's open terminals, and workers can't post to it.
-  for (const p of [mgmt, ...snitches, ...workers]) game.handleTerminal(p, true);
+  // Back-office chat reaches only the team, and workers can't post to it.
   outbox.length = 0;
   game.handleChat(snitches[0], 'Blue is in the break room', 'team', 1);
   const recipients = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
@@ -441,8 +440,6 @@ test('chat: water cooler reaches workers and snitches, never Management', () => 
   const { game, outbox, mgmt, snitches, workers } = startedGame(6, { snitches: 1 });
   const [snitch] = snitches;
   const chatTo = () => outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
-  // Everyone starts at their desk; open every terminal.
-  for (const p of [mgmt, snitch, ...workers]) game.handleTerminal(p, true);
 
   outbox.length = 0;
   game.handleChat(workers[0], 'Who rang the bell?', 'crew', 1);
@@ -462,26 +459,20 @@ test('chat: water cooler reaches workers and snitches, never Management', () => 
   game.handleChat(mgmt, 'hello?', 'crew', 1);
   assert.equal(chatTo().length, 0);
 
-  // Reconnecting closes your terminal: no terminal backlogs until you open it again,
-  // and then only the channels you're allowed to read.
+  // Reconnecting players get only the backlogs they're allowed to read.
   outbox.length = 0;
   game.sendFullState(mgmt, 1);
-  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel), ['all']);
-  assert.equal(mgmt.terminalOpen, false);
-  outbox.length = 0;
-  game.handleTerminal(mgmt, true);
-  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['general', 'team']);
+  const mgmtChannels = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort();
+  assert.deepEqual(mgmtChannels, ['all', 'team']);
   outbox.length = 0;
   game.sendFullState(snitch, 1);
-  game.handleTerminal(snitch, true);
-  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['all', 'crew', 'general', 'team']);
+  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['all', 'crew', 'team']);
 });
 
 // ===========================================================================
 // Breaks and task windows
 // ===========================================================================
 import { breakWindows } from '../shared/breaks.js';
-import { generateFridge, checkFridge, placedCells, rotate } from '../shared/minigames/fridge.js';
 
 test('breaks: schedule maps office time onto the workday', () => {
   const w = breakWindows(3, 8 * 60_000); // 8-minute day: one office hour = one minute
@@ -527,255 +518,4 @@ test('breaks: safe in break areas, desk checks off, break tasks gated', () => {
   mgmt.deskCheckReadyAt = 0;
   game.handleDeskCheck(mgmt, lunchAt + 40);
   assert.equal(game.deskCheck, null);
-});
-
-test('fridge: generated puzzles are solvable; wrong answers rejected', () => {
-  for (let i = 0; i < 200; i++) {
-    const p = generateFridge(Math.random);
-    assert.equal(p.pieces.length, 2);
-    const filled = p.items.reduce((n, it) => n + it.cells.length, 0) + p.pieces.reduce((n, pc) => n + pc.cells.length, 0);
-    assert.ok(filled < p.cols * p.rows, 'there is a decoy gap');
-    // Solve using the stored answer.
-    const placements = p.pieces.map((pc, k) => {
-      const target = [...p.answer[k]].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-      for (let rot = 0; rot < 4; rot++) {
-        const cells = placedCells(pc, rot, target[0][0], target[0][1]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-        if (JSON.stringify(cells) === JSON.stringify(target)) return { piece: k, rot, x: target[0][0], y: target[0][1] };
-      }
-      return null;
-    });
-    assert.ok(checkFridge(p, placements), 'answer fits');
-    assert.equal(checkFridge(p, [placements[0], placements[0]]), false, 'same piece twice');
-    assert.equal(checkFridge(p, [{ ...placements[0], x: -1 }, placements[1]]), false, 'out of the fridge');
-  }
-  assert.deepEqual(rotate([[0, 0], [1, 0]], 1), [[0, 0], [0, 1]]);
-});
-
-test('fridge task: window opens, answer checked by the server', () => {
-  const { game, outbox, workers } = startedGame(4, { snitches: 0 });
-  const w = workers[0];
-  const now = 1_000_000 + START_FREEZE_MS + 10;
-  w.tasks = [{ id: 'fridge', done: false }];
-  const fridge = game.office.getInteractable('fridge');
-  w.x = fridge.x + fridge.w / 2; w.y = fridge.y + fridge.h + 20;
-  game.handleInteract(w, 'fridge', now);
-  assert.equal(w.activeTask?.minigame, 'fridge');
-
-  // The client sees the puzzle but never the answer.
-  game.sendSelf(w, now);
-  const self = [...outbox].reverse().find((m) => m.to === w.id && m.t === S2C.SELF).d;
-  assert.ok(self.active.puzzle.items.length);
-  assert.equal('answer' in self.active.puzzle, false);
-
-  // Waiting doesn't finish it (no timer), a bad answer doesn't either.
-  game.tick(now + 60_000);
-  assert.equal(w.tasks[0].done, false);
-  game.handleMinigame(w, [{ piece: 0, rot: 0, x: 99, y: 99 }, { piece: 1, rot: 0, x: 0, y: 0 }], now + 61_000);
-  assert.equal(w.tasks[0].done, false);
-
-  const p = w.activeTask.puzzle;
-  const answer = p.pieces.map((pc, k) => {
-    const target = [...p.answer[k]].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-    for (let rot = 0; rot < 4; rot++) {
-      const cells = placedCells(pc, rot, target[0][0], target[0][1]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-      if (JSON.stringify(cells) === JSON.stringify(target)) return { piece: k, rot, x: target[0][0], y: target[0][1] };
-    }
-  });
-  game.handleMinigame(w, answer, now + 62_000);
-  assert.equal(w.tasks[0].done, true);
-  assert.equal(w.activeTask, null);
-});
-
-// ===========================================================================
-// Line of sight, breaker box / wifi, social meter, desk terminal, emotes
-// ===========================================================================
-import { hasLineOfSight, canSee, visibilityPolygon } from '../shared/vision.js';
-import { BREAKER_INITIAL_COOLDOWN_MS, BREAKER_HOLD_MS, WIFI_OUTAGE_MS } from '../shared/constants.js';
-import { EMOTE_COOLDOWN_MS } from '../shared/emotes.js';
-
-const DAY0 = 1_000_000 + START_FREEZE_MS; // when the workday clock starts in startedGame()
-const lastSnapFor = (outbox, id) => [...outbox].reverse().find((m) => m.to === id && m.t === S2C.SNAPSHOT)?.d.p.map((e) => e[0]);
-
-/** Stand at the breaker and hold it until it flips. Returns the new time. */
-function flipBreaker(game, p, now) {
-  const b = game.office.getInteractable('breaker');
-  p.x = b.x + b.w / 2; p.y = b.y - 22;
-  game.handleInteract(p, 'breaker', now);
-  assert.ok(p.activeTask, 'breaker hold started');
-  now += BREAKER_HOLD_MS + 10;
-  game.tick(now);
-  return now;
-}
-
-test('vision: walls block sight, open floor and doorways do not', () => {
-  const map = buildOfficeMap();
-  // Open Office A and the Conference Room are separated by walls.
-  assert.equal(hasLineOfSight(map, 300, 200, 900, 200), false);
-  // Same room, nothing in between but desks.
-  assert.equal(hasLineOfSight(map, 100, 200, 500, 200), true);
-  // Straight through Open Office A's south door into the hallway.
-  assert.equal(hasLineOfSight(map, 300, 300, 300, 540), true);
-  // Around the corner: inside Open Office A vs. the hallway off to the side of the door.
-  assert.equal(hasLineOfSight(map, 60, 300, 700, 520), false);
-  // Too far, even with a clear view down the hallway.
-  assert.equal(canSee(map, { x: 40, y: 520 }, { x: 2700, y: 520 }, 450), false);
-  assert.ok(visibilityPolygon(map, 300, 520, 450).length > 50);
-});
-
-test('vision: snapshots leave out colleagues behind walls', () => {
-  const { game, outbox, workers, mgmt } = startedGame(4, { snitches: 0 });
-  const [a, b] = workers;
-  a.x = 450; a.y = 200;       // Open Office A
-  b.x = 780; b.y = 200;       // Conference Room: close, but through two walls
-  mgmt.x = 300; mgmt.y = 520; // hallway, seen through Open Office A's door
-  game.tick(DAY0 + 10);
-  const seenByA = lastSnapFor(outbox, a.id);
-  assert.ok(seenByA.includes(a.id), 'always see yourself');
-  assert.ok(!seenByA.includes(b.id), 'not through the wall');
-  assert.ok(seenByA.includes(mgmt.id), 'through the open door');
-});
-
-test('reports need line of sight', () => {
-  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0 });
-  const w = workers[0];
-  // Close, but on the other side of Open Office A's south wall.
-  w.x = 560; w.y = 410; mgmt.x = 560; mgmt.y = 470;
-  game.handleReport(mgmt, w.id, DAY0 + REPORT_INITIAL_COOLDOWN_MS + 10);
-  assert.equal(w.status, STATUS.ACTIVE);
-  assert.match(lastToast(outbox, mgmt.id), /can't see/);
-});
-
-test('breaker: stuck at the start, outage blocks reports, then the wifi comes back', () => {
-  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0 });
-  const w = workers[0];
-  const b = game.office.getInteractable('breaker');
-  w.x = b.x + b.w / 2; w.y = b.y - 22;
-  game.handleInteract(w, 'breaker', DAY0 + 10);
-  assert.equal(w.activeTask, null);
-  assert.match(lastToast(outbox, w.id), /won't budge/);
-
-  let now = flipBreaker(game, w, DAY0 + BREAKER_INITIAL_COOLDOWN_MS + 10);
-  assert.equal(game.wifi.down, true);
-  assert.equal(game.roomState().wifi.down, true);
-
-  // Caught in the hallway, but there's no wifi to file the report.
-  w.x = 300; w.y = 520; mgmt.x = 340; mgmt.y = 520;
-  game.handleReport(mgmt, w.id, now);
-  assert.equal(w.status, STATUS.ACTIVE);
-  assert.match(lastToast(outbox, mgmt.id), /wifi/i);
-
-  now += WIFI_OUTAGE_MS + 10;
-  game.tick(now);
-  assert.equal(game.wifi.down, false);
-  game.handleReport(mgmt, w.id, now + 10);
-  assert.equal(w.status, STATUS.SENT_HOME);
-});
-
-test('breaker: anyone can switch the power back on early', () => {
-  const { game, mgmt, workers } = startedGame(4, { snitches: 0 });
-  let now = flipBreaker(game, workers[0], DAY0 + BREAKER_INITIAL_COOLDOWN_MS + 10);
-  assert.equal(game.wifi.down, true);
-  flipBreaker(game, mgmt, now);
-  assert.equal(game.wifi.down, false);
-});
-
-test('breaker: cutting the wifi calls off a desk check, and none can start while it is down', () => {
-  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0, deskCheckWarning: 20 });
-  const [cutter, away] = workers;
-  let now = DAY0 + DESK_CHECK_INITIAL_DELAY_MS + 10;
-  game.handleDeskCheck(mgmt, now);
-  assert.ok(game.deskCheck);
-  away.x = 300; away.y = 520;
-  now = flipBreaker(game, cutter, now);
-  assert.equal(game.deskCheck, null, 'desk check cancelled');
-  game.tick(now + 20_000);
-  assert.equal(away.status, STATUS.ACTIVE, 'nobody sent home');
-  mgmt.deskCheckReadyAt = 0;
-  game.handleDeskCheck(mgmt, now + 1000);
-  assert.equal(game.deskCheck, null);
-  assert.match(lastToast(outbox, mgmt.id), /wifi/i);
-});
-
-test('social meter: outage errands by real workers fill it, and a full meter wins', () => {
-  const { game, workers, mgmt } = startedGame(3, { snitches: 0 }); // 2 workers -> goal 3
-  flipBreaker(game, workers[0], DAY0 + BREAKER_INITIAL_COOLDOWN_MS + 10);
-  assert.equal(game.workdayProgress().socialGoal, 3);
-
-  const finish = (p, id, desk = false) => game.onTaskFinished(p, { id, label: id, desk });
-  finish(workers[0], 'emails', true); // desk task: not social
-  finish(mgmt, 'coffee');             // Management's tasks never count
-  assert.equal(game.social, 0);
-  finish(workers[0], 'coffee');
-  finish(workers[1], 'water');
-  assert.equal(game.social, 2);
-  assert.equal(game.phase, PHASE.PLAYING);
-  finish(workers[1], 'plant');
-  assert.equal(game.phase, PHASE.ENDED);
-  assert.equal(game.result.winner, 'workers');
-});
-
-test('social meter: errands with the wifi up, or by snitches, do not count', () => {
-  const { game, workers, snitches } = startedGame(5, { snitches: 1 });
-  game.onTaskFinished(workers[0], { id: 'coffee', label: 'coffee' });
-  assert.equal(game.social, 0);
-  flipBreaker(game, workers[0], DAY0 + BREAKER_INITIAL_COOLDOWN_MS + 10);
-  game.onTaskFinished(snitches[0], { id: 'coffee', label: 'coffee' });
-  assert.equal(game.social, 0);
-});
-
-test('terminal: only at your own desk with wifi; out on the floor you can only emote', () => {
-  const { game, outbox, workers } = startedGame(4, { snitches: 0 });
-  const [a, b, c] = workers;
-  let now = DAY0 + 10;
-
-  // No talking on the floor.
-  game.handleChat(a, 'hello?', 'all', now);
-  assert.match(lastToast(outbox, a.id), /emote/);
-  game.handleChat(a, 'hello?', 'general', now);
-  assert.equal(game.generalChat.length, 0, 'terminal channels need an open terminal');
-
-  c.x = 1000; c.y = 520; // away from desk
-  game.handleTerminal(c, true);
-  assert.equal(c.terminalOpen, false);
-  assert.match(lastToast(outbox, c.id), /desk/);
-
-  game.handleTerminal(a, true);
-  game.handleTerminal(b, true);
-  game.handleChat(a, 'I saw Red near the printer', 'general', now);
-  const liveTo = (p) => outbox.filter((m) => m.to === p.id && m.t === S2C.CHAT && m.d.line).length;
-  assert.equal(liveTo(b), 1);
-  assert.equal(liveTo(c), 0, 'closed terminals get nothing live');
-
-  // Walking away closes it.
-  b.x = 1000; b.y = 520;
-  game.tick(now += TICK_MS);
-  assert.equal(b.terminalOpen, false);
-
-  // The wifi going down knocks every terminal offline.
-  flipBreaker(game, c, DAY0 + BREAKER_INITIAL_COOLDOWN_MS + 10);
-  assert.equal(a.terminalOpen, false);
-  game.handleTerminal(a, true);
-  assert.equal(a.terminalOpen, false);
-  assert.match(lastToast(outbox, a.id), /wifi/i);
-});
-
-test('emotes: only people who can see you notice', () => {
-  const { game, outbox, workers, mgmt } = startedGame(4, { snitches: 0 });
-  const [a, b, c] = workers;
-  a.x = 450; a.y = 200;  // Open Office A
-  b.x = 300; b.y = 300;  // same room
-  c.x = 780; c.y = 200;  // Conference Room, behind the wall
-  mgmt.x = 2600; mgmt.y = 1900; // far away outside
-  const now = DAY0 + 10;
-  outbox.length = 0;
-  game.handleEmote(a, 'wave', now);
-  const got = outbox.filter((m) => m.t === S2C.EMOTE).map((m) => m.to).sort();
-  assert.deepEqual(got, [a.id, b.id].sort());
-
-  outbox.length = 0;
-  game.handleEmote(a, 'yes', now + 10);            // too soon
-  game.handleEmote(b, 'not-an-emote', now + 10);   // unknown
-  assert.equal(outbox.filter((m) => m.t === S2C.EMOTE).length, 0);
-  game.handleEmote(a, 'yes', now + EMOTE_COOLDOWN_MS + 10);
-  assert.ok(outbox.some((m) => m.t === S2C.EMOTE && m.to === b.id && m.d.id === 'yes'));
 });

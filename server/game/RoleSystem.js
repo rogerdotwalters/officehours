@@ -8,6 +8,7 @@
 import { ROLE, DESK_RANGE, REPORT_INITIAL_COOLDOWN_MS, DESK_CHECK_INITIAL_DELAY_MS } from '../../shared/constants.js';
 import { effectiveSnitches } from '../../shared/settings.js';
 import { shuffle } from './random.js';
+import { lineOfSight } from '../../shared/sight.js';
 
 export class RoleSystem {
   constructor(map) {
@@ -59,6 +60,7 @@ export class RoleSystem {
     if (!target.isActive) return { ok: false, reason: "They're not in the office." };
     if (this.isAtDesk(target)) return { ok: false, reason: "They're at their desk." };
     if (Math.hypot(reporter.x - target.x, reporter.y - target.y) > range) return { ok: false, reason: 'Get closer first.' };
+    if (!lineOfSight(this.map, reporter.x, reporter.y, target.x, target.y)) return { ok: false, reason: "You can't see them from here." };
     return { ok: true };
   }
 

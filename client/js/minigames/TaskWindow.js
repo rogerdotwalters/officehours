@@ -15,14 +15,22 @@ import { mountMicrowave } from './microwave.js';
 import { mountCatfood } from './catfood.js';
 import { mountEmail } from './email.js';
 import { mountRecycling } from './recycling.js';
+import { mountCopier } from './copier.js';
+import { mountWhiteboard } from './whiteboard.js';
+import { mountToilet } from './toilet.js';
+import { mountCoffee } from './coffee.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
 
 const UIS = {
-  fridge:    { mount: mountFridge,    sub: 'It\u2019s packed. Move coworkers\u2019 food around to make room for yours, then close the door.' },
-  microwave: { mount: mountMicrowave, sub: 'Put it in, set the time from the sticky note, press Start.' },
-  catfood:   { mount: mountCatfood,   sub: 'Scoop food from the can into Mittens\u2019 bowl.' },
-  email:     { mount: mountEmail,     sub: 'Open every email, read it, and delete it.' },
+  fridge:    { mount: mountFridge,    sub: 'It\u2019s packed. Rearrange your coworkers\u2019 food until yours fits. They\u2019ll never know.' },
+  microwave: { mount: mountMicrowave, sub: 'Fish goes in, time from the sticky note, Start. The whole floor will smell it.' },
+  catfood:   { mount: mountCatfood,   sub: 'Scoop food from the can into Mittens\u2019 bowl. Mittens is the real boss.' },
+  email:     { mount: mountEmail,     sub: 'Open every chain email, read it, and delete it. Do not forward.' },
   recycling: { mount: mountRecycling, sub: 'Everything in the box goes in the bin.' },
+  copier:    { mount: mountCopier,    sub: 'Copy every document in the stack. Don\u2019t read them. (Read them.)' },
+  whiteboard:{ mount: mountWhiteboard, sub: 'Trace the dotted lines. Nobody will know it was you.' },
+  toilet:    { mount: mountToilet,    sub: 'Everything goes in. Then flush. Then leave very quickly.' },
+  coffee:    { mount: mountCoffee,    sub: 'Follow the recipe on the sticky note. Exactly. Then Brew.' },
 };
 
 export class TaskWindow {

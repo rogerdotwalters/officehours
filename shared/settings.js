@@ -23,7 +23,7 @@ export const SETTINGS_SPEC = {
     label: 'Breaks', group: 'Workday',
     min: 0, max: 3, step: 1, default: 3,
     format: (v) => ['None', 'Lunch', 'Lunch and afternoon', 'Coffee, lunch, afternoon'][v],
-    help: 'On a break you can\u2019t be reported in the Break Room or outside, and desk checks are off.',
+    help: 'On a break nobody can be fired in the Break Room or outside, and there are no stand-ups.',
   },
   playerSpeed: {
     label: 'Walking speed', group: 'Movement and sight',
@@ -53,13 +53,13 @@ export const SETTINGS_SPEC = {
     format: (v) => `${v} s`,
   },
   deskCheckWarning: {
-    label: 'Desk check warning', group: 'Management',
+    label: 'Stand-up warning', group: 'Management',
     min: 8, max: 40, step: 1, default: 15,
     format: (v) => `${v} s`,
-    help: 'Time everyone gets to reach their desk once Management calls a desk check.',
+    help: 'Management can call a stand-up meeting: everyone has this long to get to their desk, or they\u2019re fired.',
   },
   deskCheckCooldown: {
-    label: 'Desk check cooldown', group: 'Management',
+    label: 'Stand-up cooldown', group: 'Management',
     min: 30, max: 240, step: 15, default: 90,
     format: (v) => `${v} s`,
   },

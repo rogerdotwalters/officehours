@@ -163,7 +163,8 @@ export const ITEMS = [
   "cols": 23,
   "rows": 11,
   "uses": [
-   "fridge"
+   "fridge",
+   "toilet"
   ],
   "mask": [
    "000000",
@@ -273,7 +274,8 @@ export const ITEMS = [
   "rows": 10,
   "uses": [
    "fridge",
-   "microwave"
+   "microwave",
+   "toilet"
   ],
   "mask": [
    "000000",
@@ -629,7 +631,8 @@ export const ITEMS = [
   "cols": 17,
   "rows": 13,
   "uses": [
-   "recycle"
+   "recycle",
+   "toilet"
   ],
   "mask": [
    "00060",
@@ -702,6 +705,199 @@ export const ITEMS = [
    "ffc",
    "7f8",
    "3f0"
+  ]
+ },
+ {
+  "id": "rubber_duck",
+  "name": "rubber duck",
+  "file": "rubber_duck.png",
+  "w": 60,
+  "h": 51,
+  "cols": 15,
+  "rows": 13,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "0000",
+   "0f80",
+   "1fc0",
+   "1fc0",
+   "1ff8",
+   "1fe0",
+   "1ff8",
+   "3ffc",
+   "7ffc",
+   "7ffe",
+   "3ffc",
+   "1ff8",
+   "07e0"
+  ]
+ },
+ {
+  "id": "stapler",
+  "name": "Gary's stapler",
+  "file": "stapler.png",
+  "w": 74,
+  "h": 34,
+  "cols": 19,
+  "rows": 9,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "00000",
+   "38000",
+   "3fff8",
+   "7fffc",
+   "7fffc",
+   "7fffc",
+   "7fffe",
+   "7fffe",
+   "7fffc"
+  ]
+ },
+ {
+  "id": "pineapple",
+  "name": "a whole pineapple",
+  "file": "pineapple.png",
+  "w": 48,
+  "h": 83,
+  "cols": 12,
+  "rows": 21,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "000",
+   "000",
+   "0f0",
+   "0f0",
+   "1f8",
+   "1f8",
+   "1f8",
+   "3fc",
+   "1f8",
+   "3fc",
+   "3fe",
+   "7fe",
+   "7fe",
+   "7fe",
+   "7fe",
+   "7fe",
+   "7fe",
+   "3fc",
+   "3fc",
+   "1f8",
+   "070"
+  ]
+ },
+ {
+  "id": "mug",
+  "name": "World's Okayest Boss mug",
+  "file": "mug.png",
+  "w": 56,
+  "h": 50,
+  "cols": 14,
+  "rows": 13,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "0000",
+   "7fc0",
+   "7fe0",
+   "7fe0",
+   "7ff8",
+   "7fe8",
+   "7fec",
+   "7fec",
+   "7fe8",
+   "7ff8",
+   "7fe0",
+   "7fe0",
+   "7fc0"
+  ]
+ },
+ {
+  "id": "sock",
+  "name": "one sock",
+  "file": "sock.png",
+  "w": 48,
+  "h": 65,
+  "cols": 12,
+  "rows": 17,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1f0",
+   "1fc",
+   "1fe",
+   "1fe",
+   "0fe",
+   "0fe",
+   "000"
+  ]
+ },
+ {
+  "id": "rubber_chicken",
+  "name": "rubber chicken",
+  "file": "rubber_chicken.png",
+  "w": 86,
+  "h": 40,
+  "cols": 22,
+  "rows": 10,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "000000",
+   "600000",
+   "61ff00",
+   "ffff80",
+   "ffffc0",
+   "7fffe0",
+   "07ffc0",
+   "03ff80",
+   "00ff00",
+   "000880"
+  ]
+ },
+ {
+  "id": "tp_roll",
+  "name": "way too much toilet paper",
+  "file": "tp_roll.png",
+  "w": 50,
+  "h": 47,
+  "cols": 13,
+  "rows": 12,
+  "uses": [
+   "toilet"
+  ],
+  "mask": [
+   "1fc0",
+   "3fe0",
+   "3fe0",
+   "3fe0",
+   "3fe0",
+   "3ff8",
+   "3ff8",
+   "3ff8",
+   "3ff8",
+   "3ff8",
+   "3ff8",
+   "1ff0"
   ]
  }
 ];

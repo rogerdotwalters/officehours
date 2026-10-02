@@ -121,3 +121,43 @@ test('task windows on the server: too-quick answers refused, real ones accepted'
   game.handleMinigame(me, { positions: me.activeTask.puzzle.solution }, now + 20_000);
   assert.equal(me.tasks[1].done, true);
 });
+
+import { DRAWINGS, scoreDrawing, checkWhiteboard } from '../shared/minigames/whiteboard.js';
+
+test('copier: every document copied', () => {
+  const p = MINIGAMES.copier.generate(Math.random);
+  const ids = p.docs.map((d) => d.id);
+  assert.ok(ids.length >= 3);
+  assert.ok(MINIGAMES.copier.check(p, { copied: ids }));
+  assert.equal(MINIGAMES.copier.check(p, { copied: ids.slice(1) }), false);
+});
+
+test('whiteboard: tracing passes, shaky tracing passes, skipping or scribbling fails', () => {
+  for (const d of DRAWINGS) {
+    const flat = (strokes) => strokes.map((s) => s.flatMap(([x, y]) => [Math.round(x), Math.round(y)]));
+    assert.ok(checkWhiteboard({ drawing: d.id }, { ink: flat(d.strokes) }), `${d.id} traced`);
+    const shaky = d.strokes.map((s) => s.map(([x, y], i) => [x + 2 * Math.sin(i), y + 2 * Math.cos(i)]));
+    assert.ok(scoreDrawing(d, shaky).ok, `${d.id} shaky`);
+    const scribble = [[[0, 0], [160, 100], [0, 100], [160, 0], [0, 50], [160, 50], [80, 0], [80, 100]]];
+    assert.equal(scoreDrawing(d, scribble).ok, false, `${d.id} scribble`);
+    assert.equal(checkWhiteboard({ drawing: d.id }, { ink: [] }), false);
+  }
+  // Skipping the potato's tie isn't allowed.
+  const potato = DRAWINGS.find((d) => d.id === 'potato');
+  assert.equal(scoreDrawing(potato, potato.strokes.slice(0, -1)).ok, false);
+});
+
+test('toilet: drop everything and flush; coffee: exact scoops and brew', () => {
+  const t = MINIGAMES.toilet.generate(Math.random);
+  const keys = t.items.map((i) => i.key);
+  assert.ok(keys.length >= 4);
+  assert.ok(t.items.every((i) => ITEMS_BY_ID.get(i.item).uses.includes('toilet')));
+  assert.ok(MINIGAMES.toilet.check(t, { dropped: keys, flushed: true }));
+  assert.equal(MINIGAMES.toilet.check(t, { dropped: keys, flushed: false }), false, 'must flush');
+  assert.equal(MINIGAMES.toilet.check(t, { dropped: keys.slice(1), flushed: true }), false, 'everything goes in');
+
+  const c = MINIGAMES.coffee.generate(Math.random);
+  assert.ok(MINIGAMES.coffee.check(c, { scoops: c.scoops, brewed: true }));
+  assert.equal(MINIGAMES.coffee.check(c, { scoops: c.scoops - 1, brewed: true }), false);
+  assert.equal(MINIGAMES.coffee.check(c, { scoops: c.scoops, brewed: false }), false);
+});

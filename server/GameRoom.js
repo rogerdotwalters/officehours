@@ -161,6 +161,8 @@ export class GameRoom {
       case C2S.SETTINGS:        return g.handleSettings(player, msg.settings);
       case C2S.DESK_CHECK:      return g.handleDeskCheck(player, now);
       case C2S.MINIGAME:        return g.handleMinigame(player, msg.answer, now);
+      case C2S.HR_REPORT:       return g.handleHrReport(player, msg.targetId, now);
+      case C2S.EMOTE:           return g.handleEmote(player, msg.emote);
       case C2S.DEV:             return g.sandbox && handleDevCommand(g, player, msg, now); // SANDBOX
       case C2S.RETURN_TO_LOBBY: return g.handleReturnToLobby(player);
       case C2S.PING:            return this.sendTo(player.id, encode(S2C.PONG, { at: Number(msg.at) || 0 }));

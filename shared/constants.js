@@ -39,7 +39,7 @@ export const EMERGENCY_CALLS_PER_PLAYER = 1;
 export const NAME_MAX = 16;
 export const CHAT_MAX = 140;
 export const CHAT_HISTORY = 40;
-export const MAX_MESSAGE_BYTES = 1024;       // server drops anything larger
+export const MAX_MESSAGE_BYTES = 16 * 1024; // server drops anything larger (whiteboard drawings are the biggest)
 
 // ---- Enums ----------------------------------------------------------------
 export const PHASE = Object.freeze({

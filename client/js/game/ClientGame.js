@@ -20,6 +20,7 @@ import {
 import { PFLAG } from '../../shared/protocol.js';
 import { TASKS_BY_ID } from '../../shared/tasks.js';
 import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
+import { lineOfSight } from '../../shared/sight.js';
 
 const SNAP_DISTANCE = 150;   // further than this from the server = teleport, don't smooth
 const BUFFER_SIZE = 12;
@@ -37,6 +38,7 @@ export class ClientGame {
     this.serverSelf = null;    // last authoritative local position
     this.meeting = null;
     this.spectateIndex = 0;
+    this.emotes = new Map();   // playerId -> { emote, at }
   }
 
   // ---- Applying server messages -------------------------------------------
@@ -233,6 +235,7 @@ export class ClientGame {
   actionFor(o) {
     if (o.type === 'meeting_bell') return 'Call an all-hands meeting';
     if (o.type === 'time_clock') return this.isTeam ? null : 'Clock out and go home';
+    if (o.type === 'hr_box') return this.isManagement || this.self?.hrReportUsed ? null : 'File an HR complaint';
     const task = this.pendingTaskFor(o);
     return task ? task.label : null;
   }
@@ -267,7 +270,8 @@ export class ClientGame {
       if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
       if (onBreak && this.map.inBreakArea(e.x, e.y)) continue; // safe on break
       const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
-      out.push({ id, d, inRange: d <= range });
+      const clear = d <= range && lineOfSight(this.map, this.local.x, this.local.y, e.x, e.y);
+      out.push({ id, d, inRange: clear });
     }
     return out.sort((a, b) => a.d - b.d);
   }

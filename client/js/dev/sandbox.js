@@ -39,6 +39,11 @@ const PLACES = [
   ['microwave', 'Microwave (puzzle)'],
   ['cat_bowl', 'Cat bowl (puzzle)'],
   ['dumpster', 'Recycling bin (puzzle)'],
+  ['copier', 'Copier (puzzle)'],
+  ['toilet_2', 'Toilet (puzzle)'],
+  ['coffee', 'Coffee machine (puzzle)'],
+  ['whiteboard', 'Whiteboard (puzzle)'],
+  ['hr_box', 'HR complaint box'],
   ['office_a', 'Open Office A'],
   ['office_b', 'Open Office B'],
   ['studio', 'Design Studio'],
@@ -144,7 +149,7 @@ export function install(ctx) {
       inMatch && section('Management and meetings',
         buttons([
           ['Reset all cooldowns', () => send('cooldowns')],
-          ['Desk check now', () => send('deskCheck')],
+          ['Stand-up meeting now', () => send('deskCheck')],
           ['Call a meeting now', () => send('meeting')],
           ['End the meeting', () => send('endMeeting')],
         ])),
@@ -158,7 +163,7 @@ export function install(ctx) {
           'Ignore the sight range so you can watch what everyone is doing.')),
 
       section(`Dummies (${sbx.dummies})`,
-        el('p', { class: 'sbx-note' }, 'Stand-in players for reports, desk checks and votes. They don\u2019t vote.'),
+        el('p', { class: 'sbx-note' }, 'Stand-in players for firing, stand-ups, HR complaints and chats. They don\u2019t vote.'),
         buttons([
           ['Add a dummy', () => send('addDummy')],
           ['Remove all dummies', () => send('clearDummies')],

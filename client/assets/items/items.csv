@@ -4,11 +4,11 @@ pizza,pizza slice,pizza.png,72,fridge microwave
 milk,milk,milk.png,40,fridge
 soda,soda,soda.png,36,fridge
 apple,apple,apple.png,48,fridge
-banana,banana,banana.png,92,fridge
+banana,banana,banana.png,92,fridge toilet
 takeout,takeout,takeout.png,72,fridge
 yogurt,yogurt,yogurt.png,44,fridge
 cake,birthday cake,cake.png,68,fridge
-burrito,burrito,burrito.png,96,fridge microwave
+burrito,burrito,burrito.png,96,fridge microwave toilet
 sushi,sushi,sushi.png,96,fridge
 juice,orange juice,juice.png,38,fridge
 hotsauce,hot sauce,hotsauce.png,26,fridge
@@ -20,6 +20,13 @@ lunchbox,Your lunchbox,lunchbox.png,92,yours
 smoothie,Your smoothie,smoothie.png,42,yours
 bottle,plastic bottle,bottle.png,30,recycle
 crushed_can,soda can,crushed_can.png,46,recycle
-newspaper,newspaper,newspaper.png,66,recycle
+newspaper,newspaper,newspaper.png,66,recycle toilet
 cardboard,cardboard box,cardboard.png,66,recycle
 jar,glass jar,jar.png,40,recycle
+rubber_duck,rubber duck,rubber_duck.png,60,toilet
+stapler,Gary's stapler,stapler.png,74,toilet
+pineapple,a whole pineapple,pineapple.png,48,toilet
+mug,World's Okayest Boss mug,mug.png,56,toilet
+sock,one sock,sock.png,48,toilet
+rubber_chicken,rubber chicken,rubber_chicken.png,86,toilet
+tp_roll,way too much toilet paper,tp_roll.png,50,toilet

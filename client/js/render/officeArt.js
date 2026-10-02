@@ -421,6 +421,14 @@ const OBJECTS = {
     ctx.fillStyle = '#ffffff'; ctx.font = '700 12px Fredoka, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('\u267b', o.x + o.w / 2, o.y + o.h / 2);
   },
+  hr_box: (ctx, o) => {
+    box(ctx, o, '#e0473b', '#7d1c16', 4);
+    ctx.fillStyle = '#1d2742'; ctx.fillRect(o.x + 8, o.y + 10, o.w - 16, 5);   // slot
+    ctx.fillStyle = '#ffffff'; ctx.font = '700 11px Fredoka, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('HR', o.x + o.w / 2, o.y + o.h / 2 + 6);
+  },
+  whiteboard: (ctx, o) => DECOR.whiteboard(ctx, o),
+  copier: (ctx, o) => DECOR.copier(ctx, o),
   desk: (ctx, o) => {
     box(ctx, o, '#b98b5e', '#5e4127', 5);
     ctx.fillStyle = '#1d2742'; ctx.fillRect(o.x + o.w / 2 - 20, o.y + 5, 40, 8);        // monitor

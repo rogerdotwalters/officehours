@@ -17,6 +17,8 @@ export const DEFAULT_LIMITS = {
   [C2S.SETTINGS]:        { capacity: 10, refill: 4 },
   [C2S.DESK_CHECK]:      { capacity: 2,  refill: 0.2 },
   [C2S.MINIGAME]:        { capacity: 4,  refill: 1 },
+  [C2S.HR_REPORT]:       { capacity: 2,  refill: 0.2 },
+  [C2S.EMOTE]:           { capacity: 3,  refill: 0.6 },
   [C2S.DEV]:             { capacity: 12, refill: 4 },   // SANDBOX
   [C2S.READY]:           { capacity: 4,  refill: 1 },
   [C2S.START]:           { capacity: 3,  refill: 0.5 },

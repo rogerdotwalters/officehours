@@ -25,12 +25,14 @@ import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { LOBBY_ROOM } from '../../shared/lobbyMap.js';
 import { DEFAULT_SETTINGS, sanitizeSettings } from '../../shared/settings.js';
 import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
+import { canSee } from '../../shared/sight.js';
 import { stepMovement } from '../../shared/physics.js';
 import { Player } from './Player.js';
 import { TaskSystem } from './TaskSystem.js';
 import { RoleSystem } from './RoleSystem.js';
 import { MeetingSystem, SKIP } from './MeetingSystem.js';
 import { randomId } from './random.js';
+import { EMOTES_BY_ID } from '../../shared/emotes.js';
 import * as Sandbox from '../dev/Sandbox.js'; // SANDBOX
 
 const LOBBY_GRACE_MS = 10_000;
@@ -382,6 +384,7 @@ export class Game {
     switch (object.type) {
       case 'meeting_bell': return this.callMeeting(p, now);
       case 'time_clock':   return this.clockOut(p, now);
+      case 'hr_box':       return this.handleInteractHrBox(p);
       default: {
         this.tasks.cancel(p);
         const res = this.tasks.start(p, object, now, () => this.breakTaskBlocker(now));
@@ -451,7 +454,7 @@ export class Game {
     this.broadcast(S2C.EVENT, {
       kind: 'reported', playerId: target.id, name: target.name, where: this.office.roomName(target.x, target.y),
     });
-    this.toast(p, `${target.name} was sent home.`);
+    this.toast(p, `${target.name} was fired.`);
     this.checkWin(now);
   }
 
@@ -464,24 +467,25 @@ export class Game {
   }
 
   // ===========================================================================
-  // Desk checks: Management announces one, and after the warning countdown
-  // anyone (other than Management) who isn't at their own desk is sent home.
+  // Stand-up meetings (called "desk checks" in the code): Management announces
+  // one, and after the warning countdown anyone (other than Management) who
+  // isn't at their own desk is fired.
   // ===========================================================================
 
   handleDeskCheck(p, now) {
     this.now = now;
     if (!this.canAct(p, now)) return;
-    if (!p.isManagement) return this.toast(p, 'Only Management can call a desk check.');
-    if (this.deskCheck) return this.toast(p, 'A desk check is already underway.');
+    if (!p.isManagement) return this.toast(p, 'Only Management can call a stand-up.');
+    if (this.deskCheck) return this.toast(p, 'A stand-up is already happening.');
     if (now < p.deskCheckReadyAt) {
-      return this.toast(p, `Desk check is on cooldown (${Math.ceil((p.deskCheckReadyAt - now) / 1000)}s).`);
+      return this.toast(p, `Stand-up is on cooldown (${Math.ceil((p.deskCheckReadyAt - now) / 1000)}s).`);
     }
     const warningMs = this.match.deskCheckWarning * 1000;
     const brk = this.currentBreak(now);
-    if (brk) return this.toast(p, `No desk checks during ${brk.label.toLowerCase()}.`);
+    if (brk) return this.toast(p, `No stand-ups during ${brk.label.toLowerCase()}.`);
     const upcoming = nextBreak(this.breaks, this.dayClock(now));
     if (upcoming && upcoming.startMs < this.dayClock(now) + warningMs) {
-      return this.toast(p, `${upcoming.label} starts before a desk check would finish.`);
+      return this.toast(p, `${upcoming.label} starts before a stand-up would finish.`);
     }
     this.deskCheck = { endsAt: now + warningMs, startedAt: now };
     p.deskCheckReadyAt = Infinity; // set properly when it resolves
@@ -510,11 +514,62 @@ export class Game {
   }
 
   // ===========================================================================
+  // HR complaints: at the HR box in the Lobby, an employee can report someone
+  // they think is a snitch. Once per game. If they're right, the snitch is
+  // fired. If they're wrong, HR fires the person who complained.
+  // ===========================================================================
+
+  handleHrReport(p, targetId, now) {
+    this.now = now;
+    if (!this.canAct(p, now)) return;
+    if (p.isManagement) return this.toast(p, "Management doesn't file HR complaints. You ARE the complaints.");
+    if (p.hrReportUsed) return this.toast(p, "You've already filed your one HR complaint.");
+    const box = this.office.interactables.find((o) => o.type === 'hr_box');
+    if (!box || distPointRect(p.x, p.y, box) > INTERACT_RANGE) return this.toast(p, 'Complaints go in the HR box in the Lobby.');
+    const target = typeof targetId === 'string' ? this.players.get(targetId) : null;
+    if (!target || target === p || !target.isActive) return this.toast(p, 'Pick someone who is still in the office.');
+
+    p.hrReportUsed = true;
+    p.selfDirty = true;
+    this.tasks.cancel(p);
+    if (target.isSnitch) {
+      this.sendHome(target);
+      this.broadcast(S2C.EVENT, { kind: 'hr', outcome: 'snitch', playerId: target.id, name: target.name });
+    } else {
+      this.sendHome(p);
+      this.broadcast(S2C.EVENT, { kind: 'hr', outcome: 'false', playerId: p.id, name: p.name, accusedId: target.id, accused: target.name });
+    }
+    this.checkWin(now);
+  }
+
+  handleInteractHrBox(p) {
+    if (p.isManagement) return this.toast(p, "Management doesn't file HR complaints. You ARE the complaints.");
+    if (p.hrReportUsed) return this.toast(p, "You've already filed your one HR complaint.");
+    this.toast(p, 'Pick who to report in the complaint form.');
+  }
+
+  // ===========================================================================
+  // Emotes: shown to everyone who can currently see you.
+  // ===========================================================================
+
+  handleEmote(p, emoteId) {
+    if (!EMOTES_BY_ID.has(emoteId)) return;
+    const inRoom = this.phase === PHASE.LOBBY || (this.phase === PHASE.PLAYING && p.isActive);
+    if (!inRoom) return;
+    const positions = this.positions();
+    for (const viewer of this.players.values()) {
+      if (!viewer.connected) continue;
+      const sees = this.snapshotFor(viewer, positions).p.some((e) => e[0] === p.id);
+      if (sees) this.send(viewer.id, S2C.EMOTE, { playerId: p.id, emote: emoteId });
+    }
+  }
+
+  // ===========================================================================
   // Meetings
   // ===========================================================================
 
   callMeeting(p, now) {
-    if (this.deskCheck) return this.toast(p, 'Desk check underway. Get to your desk!');
+    if (this.deskCheck) return this.toast(p, 'Stand-up meeting! Get to your desk!');
     if (p.emergencyCallsLeft <= 0) return this.toast(p, "You've used your all-hands call.");
     if (now < this.meetingAvailableAt) {
       return this.toast(p, `The bell is on cooldown (${Math.ceil((this.meetingAvailableAt - now) / 1000)}s).`);
@@ -776,8 +831,9 @@ export class Game {
 
   /**
    * What one player is allowed to see. While the workday is on, people still in
-   * the office only receive players within the sight range, so a modified client
-   * can't reveal anyone hiding in the dark. Lobby, meetings, the end screen and
+   * the office only receive players within the sight range AND in line of sight
+   * (walls block vision), so a modified client can't reveal anyone in the dark
+   * or behind a wall. Lobby, meetings, the end screen and
    * players who are out of the office see everyone.
    */
   snapshotFor(viewer, positions) {
@@ -786,7 +842,7 @@ export class Game {
     const range = this.rules.sightRange;
     const p = [];
     for (const { pl, entry } of positions) {
-      if (limited && pl !== viewer && Math.hypot(pl.x - viewer.x, pl.y - viewer.y) > range) continue;
+      if (limited && pl !== viewer && !canSee(this.office, viewer, pl, range)) continue;
       p.push(entry);
     }
     return { p };
@@ -846,6 +902,7 @@ export class Game {
       reportReadyIn: p.isManagement ? Math.max(0, p.reportReadyAt - now) : null,
       deskCheckReadyIn: p.isManagement && Number.isFinite(p.deskCheckReadyAt) ? Math.max(0, p.deskCheckReadyAt - now) : null,
       emergencyLeft: p.emergencyCallsLeft,
+      hrReportUsed: !!p.hrReportUsed,
       meetingReadyIn: Math.max(0, this.meetingAvailableAt - now),
       freezeMs: Math.max(0, this.freezeUntil - now),
     };

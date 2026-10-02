@@ -6,6 +6,8 @@
 import { drawFloors, drawWalls, drawRoomLabels, drawDecor, drawInteractable, roundRect } from './officeArt.js';
 import { PFLAG } from '../../shared/protocol.js';
 import { COLORS, DESK_RANGE, PLAYER_RADIUS, PHASE, ROLE } from '../../shared/constants.js';
+import { EMOTES_BY_ID, EMOTE_MS } from '../../shared/emotes.js';
+import { visibilityPolygon } from '../../shared/sight.js';
 
 const SKIN = ['#f3cfae', '#e0ac85', '#c68b62', '#9a6545', '#6f4630'];
 const HAIR = ['#2b1d14', '#5a3a1f', '#9b6b2f', '#d9b25b', '#1a1a1a', '#7b2f1d'];
@@ -120,14 +122,49 @@ export class Renderer {
     const reportable = new Map(game.reportableTargets().map((t) => [t.id, t]));
     for (const p of positions) this.drawPlayer(game, p, now, reportable.get(p.id));
 
+    for (const p of positions) this.drawEmote(game, p, now);
     this.drawFog(game);
     this.drawDeskCheckGuide(game, now);
     ctx.restore();
   }
 
+  /** An emote bubble over someone's head: pops in, floats a little, fades out. */
+  drawEmote(game, p, now) {
+    const e = game.emotes.get(p.id);
+    if (!e) return;
+    const age = now - e.at;
+    if (age > EMOTE_MS) { game.emotes.delete(p.id); return; }
+    const def = EMOTES_BY_ID.get(e.emote);
+    if (!def) return;
+    const ctx = this.ctx;
+    const pop = Math.min(1, age / 160);
+    const scale = pop < 1 ? 0.4 + 0.8 * pop - 0.2 * pop * pop : 1;
+    const fade = age > EMOTE_MS - 400 ? (EMOTE_MS - age) / 400 : 1;
+    const x = p.x, y = p.y - PLAYER_RADIUS - 52 - Math.min(6, age / 200);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.beginPath();
+    ctx.arc(0, 0, 21, 0, Math.PI * 2);
+    ctx.moveTo(-6, 18); ctx.lineTo(0, 30); ctx.lineTo(6, 18);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#1d2742';
+    ctx.stroke();
+    ctx.font = '24px "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.glyph, 0, 2);
+    ctx.restore();
+  }
+
   /**
-   * Darkness beyond your sight range. Cosmetic only: the server doesn't send
-   * players you can't see, so there is nothing hidden under here to uncover.
+   * The dark: everything you can't see. Walls block your view (the cut-out is
+   * a visibility polygon from shared/sight.js), and it fades out at your sight
+   * range. Cosmetic only: the server doesn't send players you can't see, so
+   * there's nothing hidden under here to uncover.
    */
   drawFog(game) {
     if (!game.inOffice || game.phase !== PHASE.PLAYING) return;
@@ -135,18 +172,42 @@ export class Renderer {
     const ctx = this.ctx;
     const r = game.settings.sightRange;
     const { x, y } = game.local;
-    const g = ctx.createRadialGradient(x, y, r * 0.78, x, y, r);
-    g.addColorStop(0, 'rgba(20, 26, 40, 0)');
-    g.addColorStop(1, 'rgba(20, 26, 40, 0.78)');
-    ctx.fillStyle = g;
-    const span = Math.max(this.w, this.h) / this.scale + 80;
-    ctx.fillRect(this.cam.x - span, this.cam.y - span, span * 2, span * 2);
-    // Faint edge so the boundary reads as "sight", not a lighting glitch.
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+
+    // Recompute what's visible only when you've moved.
+    const key = `${Math.round(x)},${Math.round(y)},${r}`;
+    if (this.visKey !== key) {
+      this.vis = visibilityPolygon(game.map, x, y, r);
+      this.visKey = key;
+    }
+
+    // Paint the dark on its own layer, cut the visible area out of it, then lay it over the world.
+    const fc = (this.fogCanvas ||= document.createElement('canvas'));
+    if (fc.width !== this.canvas.width || fc.height !== this.canvas.height) {
+      fc.width = this.canvas.width;
+      fc.height = this.canvas.height;
+    }
+    const f = (this.fogCtx ||= fc.getContext('2d'));
+    f.setTransform(1, 0, 0, 1, 0, 0);
+    f.globalCompositeOperation = 'source-over';
+    f.clearRect(0, 0, fc.width, fc.height);
+    f.fillStyle = 'rgba(20, 26, 40, 0.84)';
+    f.fillRect(0, 0, fc.width, fc.height);
+    f.setTransform(ctx.getTransform());
+    f.globalCompositeOperation = 'destination-out';
+    const g = f.createRadialGradient(x, y, r * 0.72, x, y, r);
+    g.addColorStop(0, 'rgba(0, 0, 0, 1)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    f.fillStyle = g;
+    f.beginPath();
+    this.vis.forEach(([px, py], i) => (i ? f.lineTo(px, py) : f.moveTo(px, py)));
+    f.closePath();
+    f.fill();
+    f.globalCompositeOperation = 'source-over';
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(fc, 0, 0);
+    ctx.restore();
   }
 
   /** During a desk check: an arrow from you toward your desk. */

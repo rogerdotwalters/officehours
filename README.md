@@ -1,6 +1,6 @@
 # Office Hours
 
-An office-themed social deduction game for 3 to 10 players, in the spirit of Among Us. Everyone is an office worker trying to get through the day's tasks and clock out. One of them is secretly **Management**, prowling the floor, calling surprise desk checks and sending home anyone caught away from their desk, helped by secret **snitches** who listen in on the workers' chat.
+An office shenanigans social deduction game for 3 to 10 players, in the spirit of Among Us. Nobody here is being productive: everyone is sneaking through a day of microwaving fish, photocopying nonsense and doodling on the conference whiteboard, then clocking out. One of them is secretly **Management**, prowling the floor, calling surprise stand-up meetings and **firing** anyone caught slacking away from their desk, helped by secret **snitches** who listen in on the workers' chat. Suspect a snitch? Take it to HR, but if you're wrong, HR fires you.
 
 Pure HTML, CSS and vanilla JavaScript on the client (HTML5 Canvas, native ES modules, no bundler). The server is a Cloudflare Worker with one Durable Object per room, talking to clients over WebSockets. The server is fully authoritative.
 
@@ -66,9 +66,9 @@ Test rooms let you try every feature without gathering a full game. On the menu,
 - **Match:** start immediately (alone is fine, nobody needs to be ready), go back to the waiting room, or end the match with either side winning. Wins only happen when you ask, unless you switch **Real win rules** on.
 - **Try a task:** give yourself any task from the list (puzzle tasks included), then teleport to it.
 - **Workday:** hand out the next task now, hand out every task, finish your tasks, start the next break, or jump to 4:50 PM.
-- **Management and meetings:** reset all cooldowns, start a desk check, call or end a meeting.
-- **Move me:** teleport to any room (outside too), your desk, the fridge, microwave, cat bowl, recycling bin, the bell or the time clock; send yourself home or come back; **See everyone** ignores the sight range.
-- **Dummies:** add stand-in players (they wander unless you switch that off, and don't vote) and make one post in any chat, so you can test reports, desk checks and chats on a single device.
+- **Management and meetings:** reset all cooldowns, start a stand-up meeting, call or end an all-hands meeting.
+- **Move me:** teleport to any room (outside too), your desk, any puzzle task (fridge, microwave, cat bowl, recycling, copier, whiteboard, toilet, coffee machine), the HR box, the bell or the time clock; send yourself home or come back; **See everyone** ignores the sight range.
+- **Dummies:** add stand-in players, handy for testing firing, stand-ups and HR complaints (they wander unless you switch that off, and don't vote) and make one post in any chat, so you can test reports, desk checks and chats on a single device.
 - **Quick settings:** walking speed, sight range, report range and desk-check warning, adjustable mid-match.
 
 A caution-tape stripe along the top of the screen tells you you're in a test room. Normal rooms are unaffected: the server ignores test-tool commands outside test rooms.
@@ -94,40 +94,48 @@ Each tagged line is self-contained (a hook, a flag or an import), so deleting th
 **The workday.** The day runs from 9:00 to 5:00 on the punch clock at the top of the screen. Its length and the number of tasks are house rules, and the day is split into equal sections, one per task: at the start of each section everyone is handed one new task, picked at random according to each task's chance. The clock pauses during all-hands meetings. Walk up to the right object and hold the interaction to do a task; walking away cancels it.
 
 **Breaks.** The day has up to three scheduled breaks (a house rule): a coffee break at 10:30, lunch at noon and an afternoon break at 3:00. They show as green bands on the punch clock. During a break:
-- anyone in the Break Room or anywhere outside is safe from reports, and those areas glow green on the map
-- Management can't call a desk check (or start one that would still be running when a break begins)
+- nobody in the Break Room or anywhere outside can be fired, and those areas glow green on the map
+- Management can't call a stand-up meeting (or start one that would still be running when a break begins)
 - break tasks, like eating lunch in the break room or on the patio, can be done. Before a break they wait; if the day has no breaks left, they can be done any time.
 
 **Task windows.** Some tasks open a little game instead of a hold-to-finish bar. The server generates each one and checks the answer, and refuses answers that come back impossibly fast. Walking away, or pressing Esc, cancels the task.
 
-- **Put your lunch in the fridge.** The fridge is already full of coworkers' food (pictures from the item table). Drag their food around (slide it together, tuck things into each other's gaps, stack them) until your lunchbox and smoothie fit, then close the door. Collision follows each picture's solid pixels, not its rectangle: the outline you see while dragging is the traced shape, green where it fits and red where it doesn't, and dropped items settle down onto a shelf or onto other food.
-- **Reheat your leftovers.** Drag the food into the microwave, type the time from its sticky note on the keypad, press Start.
-- **Clear out your inbox** (at your desk). Three to five emails, some sensible, some silly: open each one, read it, delete it.
+- **Squeeze your lunch into the fridge.** The fridge is already full of coworkers' food (pictures from the item table). Drag their food around (slide it together, tuck things into each other's gaps, stack them) until your lunchbox and smoothie fit, then close the door. Collision follows each picture's solid pixels, not its rectangle: the outline you see while dragging is the traced shape, green where it fits and red where it doesn't, and dropped items settle down onto a shelf or onto other food.
+- **Reheat fish in the microwave.** Drag the food into the microwave, type the time from its sticky note on the keypad, press Start.
+- **Delete the chain emails** (at your desk). Three to five pieces of office nonsense: open each one, read it, delete it.
+- **Photocopy something ridiculous.** Drag each document from the stack onto the copier glass and press Copy: a petition to replace the stairs with a slide, Gary's fourth self-nomination for Employee of the Month, and so on. The copier always jams once (PC LOAD LETTER).
+- **Clog the toilet (on purpose).** Drag everything you found around the office into the bowl (a rubber duck, Gary's stapler, a whole pineapple, a rubber chicken, the World's Okayest Boss mug...), then flush. Then leave very quickly.
+- **Make dangerously strong coffee.** Scoop grounds from the canister into the filter, exactly as many times as the sticky-note recipe says (Gary's calls for six), then press Brew.
+- **Doodle on the conference whiteboard.** Trace a dotted drawing with the marker: Bob from Accounting as a potato, the Q3 strategy (line go up), our new CEO (a cat in a tie), an org chart where every box is Gary, the coffee machine's feelings, or the fire evacuation plan (snacks first). It counts when most of the outline is traced, every part of it at least mostly, without scribbling all over the board. The server re-scores your drawing with the same rules.
 - **Feed the office cat.** Dip the spoon into the can to scoop, tip it into Mittens' bowl, repeat until the bowl is full.
 - **Take out the recycling.** Drag everything from the box into the blue bin.
 
 **Workers** finish their tasks and, once the last one of the day is done, clock out at the **time clock in the Lobby**. Clocked-out workers are safe.
 
-**Management** has a fake "cover story" to-do list so the screen looks the same as everyone else's, and two ways to send people home:
-- **Report:** catch someone within report range who is **not at their own desk**. Has a cooldown.
-- **Desk check:** announces a countdown to everyone. When it hits zero, anyone (worker or snitch) who isn't at their own desk is sent home. Has its own cooldown, and the countdown length is a house rule.
+**Management** has a fake "cover story" to-do list so the screen looks the same as everyone else's, and two ways to fire people:
+- **Fire:** catch someone within range who is **not at their own desk**. Has a cooldown.
+- **Stand-up meeting:** Management calls a meeting and everyone has to attend it from their own desk. A countdown starts for everyone; when it hits zero, anyone (worker or snitch) who isn't at their desk is fired. Has its own cooldown, and the countdown length is a house rule.
 
-**Snitches** work exactly like workers (they get tasks and must survive desk checks), but they're on Management's side, can't clock out, and win when Management wins.
+**HR complaints.** There's an HR complaint box in the Lobby. Any employee (not Management) can file one complaint per game, naming the coworker they think is a snitch. If they're right, the snitch is fired. If they're wrong, HR fires the person who complained, and everyone hears about it.
+
+**Emotes.** Hold the emote button and a ring of emote bubbles pops up around it; drag onto one and let go. (A quick tap opens the ring for tapping instead; on a keyboard, press G.) The emote appears over your head for anyone who can see you, in the waiting room and during the workday.
+
+**Snitches** work exactly like workers (they get tasks and must survive stand-ups), but they're on Management's side, can't clock out, and win when Management wins.
 
 **Chats.**
 - *Everyone:* the lobby, all-hands meetings, and after the game.
 - *Water cooler:* workers and snitches, any time during the day. Management can't see it.
 - *Back office:* Management and snitches, any time during the day.
 
-Snitches read and post in both private chats, so they can spy on the workers and report back. Anyone sent home can still read their chats but can't post.
+Snitches read and post in both private chats, so they can spy on the workers and report back. Anyone who's been fired or clocked out can still read their chats but can't post.
 
-**Sight.** You can only see other players within the sight range (a house rule). The server doesn't even send positions beyond it, so the darkness can't be hacked away. Players who are out of the office can watch anyone.
+**Sight.** You can only see other players within the sight range (a house rule) **and in line of sight**: walls block vision, doorways and the outdoors don't. The darkness on screen follows the walls, so you see into a room through its door and the light spills out into the hallway. The server doesn't even send you players you can't see, so the darkness can't be hacked away, and Management can't fire anyone through a wall. Furniture is low enough to see over. Players who are out of the office can watch anyone.
 
 **Emergency meetings.** Any player in the office can ring the bell on the conference table (once per game each, with a cooldown). Everyone is pulled into the Conference Room to talk and vote. The player with the most votes is ejected and their role is revealed; a tie or a skip majority ejects nobody. Everyone then returns to their desk.
 
 **Winning.**
 - **Workers win** when at least half of the real workers (rounded up) have clocked out, or when Management is voted out or leaves.
-- **Management (and the snitches) win** when it becomes impossible for enough workers to clock out, or when 5:00 arrives first.
+- **Management (and the snitches) win** when too many workers have been fired for enough of them to clock out, or when 5:00 arrives first.
 
 ### House rules
 
@@ -139,10 +147,10 @@ Snitches read and post in both private chats, so they can spy on the workers and
 | Walking speed | 0.6x to 1.5x | 1.0x |
 | Sight range | 4 to 18 m | 9 m |
 | Snitches | 0 to 3 (always leaves at least 2 real workers) | 1 |
-| Report range | 2 to 8 m | 4 m |
-| Report cooldown | 10 to 60 s | 25 s |
-| Desk check warning | 8 to 40 s | 15 s |
-| Desk check cooldown | 30 to 240 s | 90 s |
+| Firing range | 2 to 8 m | 4 m |
+| Firing cooldown | 10 to 60 s | 25 s |
+| Stand-up warning | 8 to 40 s | 15 s |
+| Stand-up cooldown | 30 to 240 s | 90 s |
 
 All of these live in `shared/settings.js`, with labels, ranges and help text; the server clamps every value.
 
@@ -153,12 +161,13 @@ All of these live in `shared/settings.js`, with labels, ranges and help text; th
 | Move | WASD or arrow keys | Joystick, bottom left |
 | Use / interact | E or Space, or click the object | Use button, bottom right |
 | Stop a task | Esc or Q, or walk away | Walk away |
-| Report (Management) | R, or click the player | Report button |
-| Desk check (Management) | F | Desk check button |
+| Fire someone (Management) | R, or click the player | Fire button |
+| Stand-up meeting (Management) | F | Stand-up button |
+| Emotes | Hold the emote button and drag, or press G | Hold the emote button and drag |
+| HR complaint | E at the HR box in the Lobby | Use at the HR box |
 | Water cooler / your private chat | T | Water cooler button |
 | Back office (Management, snitches) | B | Back office button |
 | Watch someone else (when out) | E | Watch button |
-| Rotate an item (task window) | R or right-click | Rotate button |
 | Leave a task window | Esc | Walk away button |
 
 On phones, the lobby folder becomes a bottom sheet (portrait) or a side panel (landscape), and the to-do note starts collapsed: tap it to open.
@@ -173,7 +182,7 @@ office-hours/
 │   ├── config.js             serverUrl for split hosting (Option B)
 │   └── js/
 │       ├── main.js           Glue: wires Network, ClientGame, Input, Renderer, UI; game loop
-│       ├── minigames/        Task window and each game's screen (fridge, microwave, email, catfood, recycling)
+│       ├── minigames/        Task window and each game's screen (fridge, microwave, email, catfood, recycling, copier, whiteboard, toilet, coffee)
 │   └── assets/items/         Item pictures and items.csv
 │       ├── dev/              Test tools drawer and its stylesheet (removable)
 │       ├── net/Network.js    WebSocket client, reconnect, ping, message dispatch
@@ -189,7 +198,7 @@ office-hours/
 │   ├── GameRoom.js           Durable Object: sockets, sessions, rate limiting, tick loop, cleanup
 │   ├── net/RateLimiter.js    Token buckets per message type + global flood control
 │   └── game/                 Pure game logic (no Cloudflare APIs, unit-testable in Node)
-│       ├── Game.js           Phases, lobby room, workday clock, desk checks, chats, sight, win checks
+│       ├── Game.js           Phases, lobby room, workday clock, stand-ups, HR, emotes, chats, sight, win checks
 │       ├── Player.js
 │       ├── TaskSystem.js     Weighted task draws, timed holds, completion validation
 │       ├── RoleSystem.js     Management, snitches, desks, report validation
@@ -205,6 +214,8 @@ office-hours/
 │   ├── physics.js            Deterministic movement + collision
 │   ├── tasks.js              Task catalogue with chance weights
 │   ├── breaks.js             Break schedule and helpers
+│   ├── emotes.js             The emote list
+│   ├── sight.js              Line of sight: wall blocking, who can see whom, visibility polygon
 │   └── minigames/            Task-window games: generate, check (shared by server and client),
 │                             pixelMask.js (solid/transparent scan), items.js + items.generated.js
 ├── scripts/build.mjs         client/ → dist/, shared/ → dist/shared/
@@ -213,7 +224,7 @@ office-hours/
 └── wrangler.toml
 ```
 
-**Authority.** Clients only send intents: a movement direction, "interact with object X", "report player Y", a vote, a chat line. The server runs the simulation at 20 ticks per second using the same `shared/physics.js` and map the client uses, validates everything, and broadcasts results. Roles, task lists and cooldowns are sent only to the player they belong to. Each player's snapshot contains only the players within their sight range, carrying just position and two public flags (busy, at desk). Private chat lines are only ever sent to the players allowed to read them.
+**Authority.** Clients only send intents: a movement direction, "interact with object X", "report player Y", a vote, a chat line. The server runs the simulation at 20 ticks per second using the same `shared/physics.js` and map the client uses, validates everything, and broadcasts results. Roles, task lists and cooldowns are sent only to the player they belong to. Each player's snapshot contains only the players within their sight range and line of sight, carrying just position and two public flags (busy, at desk). Private chat lines are only ever sent to the players allowed to read them.
 
 **Smooth movement.** The local player is predicted immediately with the shared physics and gently corrected toward the server position. Remote players are rendered about 110 ms in the past and interpolated between snapshots.
 
@@ -237,6 +248,8 @@ JSON messages of the form `{ "t": type, ...fields }`.
 | `settings` | `settings` | Host only, lobby only; clamped by the server |
 | `deskcheck` | | Management only; cooldown and break rules checked |
 | `minigame` | `answer` | Solution for your open task window; checked by the server |
+| `hr` | `targetId` | HR complaint, at the HR box; once per game |
+| `emote` | `emote` | One of shared/emotes.js |
 | `dev` | `cmd, ...` | Test tools; ignored outside test rooms |
 | `lobby` | | Host only, return to lobby after game over |
 | `ping` | `at` | Latency |
@@ -244,11 +257,12 @@ JSON messages of the form `{ "t": type, ...fields }`.
 | Server → client | Contents |
 | --- | --- |
 | `welcome` | Your player id, session token, room code |
-| `room` | Public roster, phase, house rules, workday clock, desk check countdown |
+| `room` | Public roster, phase, house rules, workday clock, stand-up countdown |
 | `start` | Game started, freeze duration |
+| `emote` | Someone you can see emoted |
 | `snap` | Positions and public flags for the players you can see (20/s) |
 | `self` | Private: role, teammates (Management/snitches only), desk, tasks, cooldowns |
-| `event` | Feed items (sent home, clocked out, meeting, desk check, breaks, your new task) |
+| `event` | Feed items (fired, clocked out, meetings, stand-ups, HR outcomes, breaks, your new task) |
 | `meeting` | Meeting state; who has voted is public, the tally only at the end |
 | `chat`, `toast`, `error`, `pong` | |
 | `over` | Winner, reason, who Management and the snitches were |
@@ -273,7 +287,7 @@ JSON messages of the form `{ "t": type, ...fields }`.
 
 The server picks it up automatically. Tasks with chance 2 or less are tagged "rare" in the to-do list, 3 to 4 "uncommon".
 
-**Change or add item pictures.** The pictures used by the fridge, microwave and recycling games live in `client/assets/items/`, listed in `items.csv` (open it in any spreadsheet app):
+**Change or add item pictures.** The pictures used by the fridge, microwave, recycling and toilet games live in `client/assets/items/`, listed in `items.csv` (open it in any spreadsheet app):
 
 | Column | Meaning |
 | --- | --- |
@@ -281,7 +295,7 @@ The server picks it up automatically. Tasks with chance 2 or less are tagged "ra
 | `name` | What players see, e.g. `burrito`. Coworkers' food shows as "Gary's burrito" |
 | `file` | The PNG in the same folder. Use a transparent background |
 | `width` | Size in fridge units (the fridge is 320 wide; each shelf is 104 tall). Height follows the picture's proportions |
-| `uses` | Space-separated: `fridge` (coworkers' food), `yours` (your items to fit in), `microwave` (can be reheated), `recycle` |
+| `uses` | Space-separated: `fridge` (coworkers' food), `yours` (your items to fit in), `microwave` (can be reheated), `recycle`, `toilet` (things to clog the toilet with) |
 
 When you build (`npm run build`, `npm run dev`, `npm test`, or just `npm run items`), `scripts/build-items.mjs` reads every PNG and works out its collision shape: the picture is divided into 4x4-unit cells, and a cell counts as solid when at least a quarter of its pixels are opaque (`shared/minigames/pixelMask.js`; the thresholds are at the top of that file). It also traces the edges between solid and transparent cells for the outline. The result goes into `shared/minigames/items.generated.js`, which the server and the browser both use, so the server can check fridge answers with exactly the shapes players see. If a row is wrong (missing file, bad width, unknown use), the build stops and says which line.
 
@@ -292,6 +306,10 @@ Tips: crop pictures tightly; transparent holes and curves count as free space; k
 2. Add `client/js/minigames/<name>.js` exporting a `mount(root, puzzle, { submit, isTouch })` function, and register it in `UIS` in `client/js/minigames/TaskWindow.js`.
 3. Give a task `minigame: '<name>'` in `shared/tasks.js`.
 
+**Emotes.** The list is `shared/emotes.js` (an id, an emoji and a label each); the ring lays out however many there are.
+
+**Whiteboard drawings and copier documents.** Drawings are in `shared/minigames/whiteboard.js`, built from little shape helpers (circles, arcs, lines, rectangles) on a 160 x 100 board, with optional printed labels that don't need tracing. Copier documents and chain emails are plain lists in `copier.js` and `email.js`.
+
 **Breaks.** Times live in `shared/breaks.js`; which rooms count as safe is the `breakArea` flag on rooms in `shared/officeMap.js`.
 
 **Add a house rule.** Add an entry to `SETTINGS_SPEC` in `shared/settings.js` (label, group, min, max, step, default, format). It appears in the lobby automatically; read it on the server from `game.match`.
@@ -300,4 +318,4 @@ Tips: crop pictures tightly; transparent holes and curves count as free space; k
 
 **Tuning.** Room size, freeze times, meeting length and the clock-out ratio are in `shared/constants.js`.
 
-**Ideas for later.** Walls that block sight, WebSocket hibernation for idle rooms, sabotage events (printer jam, fire drill), sprite art, sound.
+**Ideas for later.** WebSocket hibernation for idle rooms, sabotage events (printer jam, fire drill), sprite art, sound.

@@ -20,6 +20,8 @@ export const C2S = Object.freeze({
   SETTINGS: 'settings',    // { settings: {...partial} }  host only, lobby only
   DESK_CHECK: 'deskcheck', // {}  Management only
   MINIGAME: 'minigame',    // { answer }  solution for the task window you have open
+  HR_REPORT: 'hr',         // { targetId }  at the HR box: report a suspected snitch (once per game)
+  EMOTE: 'emote',          // { emote }  see shared/emotes.js
   DEV: 'dev',              // { cmd, ... }  test rooms only (server/dev/Sandbox.js)  SANDBOX
   RETURN_TO_LOBBY: 'lobby',// {}  host only, after game over
   PING: 'ping',            // { at }
@@ -30,6 +32,7 @@ export const S2C = Object.freeze({
   ERROR: 'error',          // { code, message }
   ROOM: 'room',            // roster + phase (public info only)
   GAME_START: 'start',     // { freezeMs }
+  EMOTE: 'emote',          // { playerId, emote }  someone you can see emoted
   SNAPSHOT: 'snap',        // { p: [[id, x, y, flags], ...] }  only players you can see
   SELF: 'self',            // private: role, desk, tasks, cooldowns
   EVENT: 'event',          // { kind, ... } feed items

@@ -1,19 +1,17 @@
 /**
- * In-person emotes. Out on the floor nobody can type: you can only react, and
- * only people who can see you notice. Talking happens at your desk terminal.
- * Keys 1-8 on a keyboard, or the emote buttons on screen.
+ * Emotes: hold the emote button, drag to a bubble, let go. The emote pops up
+ * over your head for everyone who can see you. Add or change them here; the
+ * radial menu lays out however many there are.
  */
 export const EMOTES = [
-  { id: 'wave',    glyph: '👋', label: 'Wave' },
-  { id: 'yes',     glyph: '👍', label: 'Yes' },
-  { id: 'no',      glyph: '👎', label: 'No' },
-  { id: 'look',    glyph: '👀', label: 'Look' },
-  { id: 'what',    glyph: '❓', label: 'What?' },
-  { id: 'alarm',   glyph: '❗', label: 'Watch out' },
-  { id: 'shh',     glyph: '🤫', label: 'Shh' },
-  { id: 'laugh',   glyph: '😂', label: 'Ha' },
+  { id: 'lol',    glyph: '\u{1F602}', label: 'LOL' },
+  { id: 'ok',     glyph: '\u{1F44D}', label: 'Thumbs up' },
+  { id: 'shock',  glyph: '\u{1F631}', label: 'Shocked' },
+  { id: 'coffee', glyph: '\u2615',    label: 'Coffee' },
+  { id: 'sleepy', glyph: '\u{1F634}', label: 'Sleepy' },
+  { id: 'eyes',   glyph: '\u{1F440}', label: 'Watching you' },
+  { id: 'shh',    glyph: '\u{1F92B}', label: 'Shh' },
+  { id: 'love',   glyph: '\u2764\uFE0F', label: 'Love' },
 ];
-
 export const EMOTES_BY_ID = new Map(EMOTES.map((e) => [e.id, e]));
-export const EMOTE_MS = 2600;        // how long a bubble shows
-export const EMOTE_COOLDOWN_MS = 900;
+export const EMOTE_MS = 3200;

@@ -83,9 +83,10 @@
             <summary>How the day works</summary>
             <p>One of you is secretly <strong>Management</strong>, maybe helped by a few secret <strong>snitches</strong>. Everyone else is a worker.</p>
             <p>Tasks arrive one at a time as the workday goes on. Finish them all, then clock out at the time clock in the Lobby. If enough workers clock out before five o'clock, workers win.</p>
-            <p>Management sends people home by catching them away from their desks, or by calling a desk check: when the countdown ends, anyone not at their own desk goes home.</p>
+            <p>Management fires people by catching them away from their desks, or by calling a stand-up meeting: when the countdown ends, anyone not at their own desk is fired.</p>
+            <p>Suspect a snitch? File a complaint in the HR box in the Lobby. Right, and the snitch is fired. Wrong, and HR fires you instead. One complaint per person.</p>
             <p>During the day, workers can talk in the <strong>water cooler</strong> chat and Management in the <strong>back office</strong>. Snitches work like everyone else but sit in both chats, passing on what they hear, and win with Management.</p>
-            <p>The day has breaks. On a break you can't be reported in the Break Room or anywhere outside, Management can't call desk checks, and lunch tasks can finally be done.</p>
+            <p>The day has breaks. On a break nobody can be fired in the Break Room or anywhere outside, there are no stand-ups, and lunch tasks can finally be done.</p>
             <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
           </details>
         </section>
@@ -129,7 +130,7 @@
       </div>
 
       <div id="hud-deskcheck" class="deskcheck" role="alert" hidden>
-        <span class="deskcheck__title">Desk check</span>
+        <span class="deskcheck__title">Stand-up meeting</span>
         <span class="deskcheck__body"></span>
         <span class="deskcheck__count"></span>
       </div>
@@ -153,8 +154,8 @@
       <div class="actions">
         <button id="act-crew" class="act act--crew" hidden><span class="act__label">Water cooler <kbd>T</kbd></span><span id="crew-unread" class="count" hidden></span></button>
         <button id="act-team" class="act act--team" hidden><span class="act__label">Back office <kbd>B</kbd></span><span id="team-unread" class="count" hidden></span></button>
-        <button id="act-deskcheck" class="act act--deskcheck" hidden><span class="act__label">Desk check <kbd>F</kbd></span><span class="act__sub"></span></button>
-        <button id="act-report" class="act act--report" hidden><span class="act__label">Report <kbd>R</kbd></span><span class="act__sub"></span></button>
+        <button id="act-deskcheck" class="act act--deskcheck" hidden><span class="act__label">Stand-up <kbd>F</kbd></span><span class="act__sub"></span></button>
+        <button id="act-report" class="act act--report" hidden><span class="act__label">Fire <kbd>R</kbd></span><span class="act__sub"></span></button>
         <button id="act-use" class="act act--use" hidden>Use</button>
       </div>
 
@@ -191,6 +192,10 @@
         </form>
       </section>
     </div>
+
+    <!-- Emotes: hold, drag to a bubble, let go (client/js/ui/EmoteMenu.js) -->
+    <button id="emote-btn" class="emote-btn" type="button" aria-label="Emotes (hold and drag)" hidden>&#x1F642;</button>
+    <div id="emote-ring" class="emote-ring" hidden></div>
 
     <!-- Touch joystick (touch devices; works in the lobby room and the office) -->
     <div id="touch-stick" class="touch-stick" hidden><div class="touch-stick__knob"></div></div>
@@ -245,6 +250,22 @@
         <button id="taskwin-close" class="btn btn--small" type="button">Walk away</button>
       </header>
       <div id="taskwin-body" class="taskwin__body"></div>
+    </section>
+  </div>
+
+  <!-- HR complaint form (at the HR box in the Lobby) -->
+  <div id="overlay-hr" class="overlay overlay--task" hidden>
+    <section class="hrform" role="dialog" aria-modal="true" aria-labelledby="hr-title">
+      <header class="hrform__head">
+        <p class="hrform__dept">Human Resources</p>
+        <h2 id="hr-title">Anonymous complaint form</h2>
+        <p class="hrform__warn">I believe the following coworker is a <b>snitch</b>. I understand that if I'm wrong, <b>I will be fired</b>.</p>
+      </header>
+      <ul id="hr-list" class="hrform__list"></ul>
+      <div class="hrform__actions">
+        <button id="hr-cancel" class="btn btn--quiet" type="button">Never mind</button>
+        <button id="hr-submit" class="btn btn--primary" type="button" disabled>File complaint</button>
+      </div>
     </section>
   </div>
 

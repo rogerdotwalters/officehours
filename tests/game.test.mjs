@@ -519,3 +519,79 @@ test('breaks: safe in break areas, desk checks off, break tasks gated', () => {
   game.handleDeskCheck(mgmt, lunchAt + 40);
   assert.equal(game.deskCheck, null);
 });
+
+// ===========================================================================
+// HR complaints and emotes
+// ===========================================================================
+
+test('HR: right guess fires the snitch; wrong guess fires you; once per game', () => {
+  const { game, outbox, mgmt, snitches, workers } = startedGame(6, { snitches: 1 });
+  const now = 1_000_000 + START_FREEZE_MS + 10;
+  const box = game.office.getInteractable('hr_box');
+  const atBox = (p) => { p.x = box.x - 20; p.y = box.y + box.h / 2; };
+  const [a, b, c] = workers;
+
+  // Away from the box: refused.
+  a.x = 300; a.y = 520;
+  game.handleHrReport(a, snitches[0].id, now);
+  assert.equal(snitches[0].status, STATUS.ACTIVE);
+
+  // Right guess.
+  atBox(a);
+  game.handleHrReport(a, snitches[0].id, now);
+  assert.equal(snitches[0].status, STATUS.SENT_HOME);
+  assert.ok(outbox.some((m) => m.t === S2C.EVENT && m.d.kind === 'hr' && m.d.outcome === 'snitch'));
+
+  // Only once.
+  game.handleHrReport(a, b.id, now);
+  assert.equal(b.status, STATUS.ACTIVE);
+
+  // Wrong guess: the accuser is fired, not the accused.
+  atBox(c);
+  game.handleHrReport(c, b.id, now);
+  assert.equal(c.status, STATUS.SENT_HOME);
+  assert.equal(b.status, STATUS.ACTIVE);
+
+  // Management can't use it.
+  atBox(mgmt);
+  game.handleHrReport(mgmt, b.id, now);
+  assert.equal(b.status, STATUS.ACTIVE);
+});
+
+test('emotes: only people who can see you get them; unknown emotes ignored', () => {
+  const { game, outbox, workers } = startedGame(4, { snitches: 0, sightRange: 300 });
+  game.tick(1_000_000 + START_FREEZE_MS + 10);
+  const [a, b, c] = workers;
+  a.x = 300; a.y = 520; b.x = 400; b.y = 520; c.x = 1500; c.y = 520;
+  outbox.length = 0;
+  game.handleEmote(a, 'lol');
+  const to = outbox.filter((m) => m.t === S2C.EMOTE).map((m) => m.to);
+  assert.ok(to.includes(a.id) && to.includes(b.id));
+  assert.ok(!to.includes(c.id), 'too far away to see it');
+  outbox.length = 0;
+  game.handleEmote(a, '<script>');
+  assert.equal(outbox.length, 0);
+});
+
+test('line of sight: walls hide players and block firing; doorways do not', () => {
+  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0, sightRange: 600 });
+  const now = 1_000_000 + START_FREEZE_MS + REPORT_INITIAL_COOLDOWN_MS + 10;
+  const [a, b] = workers;
+  // a is inside Open Office A, b is in the hallway right below its south wall (not at the door).
+  a.x = 100; a.y = 380; b.x = 100; b.y = 520;
+  outbox.length = 0;
+  game.tick(now);
+  const seen = (p) => outbox.filter((m) => m.to === p.id && m.t === S2C.SNAPSHOT).pop().d.p.map((e) => e[0]);
+  assert.ok(!seen(a).includes(b.id), 'wall in the way');
+  // Move b in line with the doorway: visible.
+  b.x = 300;
+  a.x = 300;
+  outbox.length = 0;
+  game.tick(now + 50);
+  assert.ok(seen(a).includes(b.id), 'seen through the door');
+
+  // Management on the other side of the wall can't fire them, even in range.
+  mgmt.x = 100; mgmt.y = 520; b.x = 60; b.y = 410;
+  game.handleReport(mgmt, b.id, now + 100);
+  assert.equal(b.status, STATUS.ACTIVE);
+});

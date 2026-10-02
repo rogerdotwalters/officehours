@@ -100,6 +100,12 @@ export class UI {
     for (const btn of document.querySelectorAll('[data-switch-chat]')) btn.addEventListener('click', () => this.toggleChat(btn.dataset.switchChat, true));
     $('meeting-skip').addEventListener('click', () => this.h.onVote('skip'));
     $('over-lobby').addEventListener('click', () => this.h.onReturnToLobby());
+    $('hr-cancel').addEventListener('click', () => this.hideHrForm());
+    $('hr-submit').addEventListener('click', () => {
+      if (!this.hrPick) return;
+      this.hrSubmit?.(this.hrPick);
+      this.hideHrForm();
+    });
   }
 
   /** Phone-sized: bottom sheet lobby, collapsed to-do note. */
@@ -126,7 +132,7 @@ export class UI {
   }
 
   hideOverlays() {
-    for (const id of ['overlay-role', 'overlay-meeting', 'overlay-over']) $(id).hidden = true;
+    for (const id of ['overlay-role', 'overlay-meeting', 'overlay-over', 'overlay-hr']) $(id).hidden = true;
     this.closeChats();
   }
 
@@ -348,9 +354,9 @@ export class UI {
     document.body.classList.toggle('is-deskcheck', dcLeft != null && playing);
     if (dcLeft != null) {
       let body;
-      if (mgmt) body = 'Anyone away from their desk when this hits zero goes home.';
+      if (mgmt) body = 'Anyone away from their desk when this hits zero is fired.';
       else if (!game.inOffice) body = 'Everyone in the office has to be at their desk.';
-      else body = (frame.atDesk ? "You're at your desk. Stay put." : 'Get back to your desk!');
+      else body = (frame.atDesk ? "You're at your desk. Look busy." : 'Get to your desk or you\u2019re fired!');
       setText(dcBox.querySelector('.deskcheck__body'), body);
       setText(dcBox.querySelector('.deskcheck__count'), String(Math.ceil(dcLeft / 1000)));
       dcBox.classList.toggle('is-safe', !!frame.atDesk && !mgmt);
@@ -361,7 +367,7 @@ export class UI {
     const freezeLeft = (self?.freezeUntil ?? 0) - now;
     const watch = this.isTouch ? 'Tap Watch to follow someone else.' : 'Press E to watch someone else.';
     if (self?.status === STATUS.HOME) banner = `You clocked out. Enjoy your evening. ${watch}`;
-    else if (self?.status === STATUS.SENT_HOME) banner = `You were sent home. ${watch}`;
+    else if (self?.status === STATUS.SENT_HOME) banner = `You're fired! Clear out your desk. ${watch}`;
     else if (playing && freezeLeft > 0) banner = `Back to work in ${Math.ceil(freezeLeft / 1000)}`;
     setText($('hud-status'), banner);
     setHidden($('hud-status'), !banner || !$('overlay-role').hidden);
@@ -455,8 +461,8 @@ export class UI {
     if (!show) return;
     setText(box.querySelector('.deskcheck__title'), brk.current.label);
     setText(box.querySelector('.deskcheck__body'), game.isManagement
-      ? "Anyone in the Break Room or outside can't be reported. No desk checks."
-      : "You're safe in the Break Room and outside. No desk checks.");
+      ? "Nobody in the Break Room or outside can be fired. No stand-ups."
+      : "You can't be fired in the Break Room or outside. No stand-ups.");
     setText(box.querySelector('.deskcheck__count'), formatClock(brk.current.endMs - brk.elapsed));
   }
 
@@ -521,7 +527,7 @@ export class UI {
       const target = game.reportableTargets().find((t) => t.inRange);
       report.disabled = cd > 0 || !target;
       setText(report.querySelector('.act__sub'),
-        cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody in range');
+        cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody to catch');
     }
 
     // Desk check (Management)
@@ -569,7 +575,7 @@ export class UI {
     let title, body, teamLine = '';
     if (role === ROLE.MANAGEMENT) {
       title = "You're Management";
-      body = 'Catch workers away from their desks and Report them, or call a desk check and send home anyone who doesn\u2019t make it back in time. Pretend to do your tasks so nobody suspects you.';
+      body = 'Catch workers slacking away from their desks and fire them, or call a surprise stand-up meeting and fire anyone who doesn\u2019t make it back to their desk in time. Pretend to do your tasks so nobody suspects you.';
       teamLine = snitchMates.length
         ? `Your snitches: ${listNames(snitchMates)}. Coordinate in the back office.`
         : "No snitches today. You're on your own.";
@@ -582,7 +588,7 @@ export class UI {
       ].filter(Boolean).join(' ');
     } else {
       title = "You're a worker";
-      body = 'Tasks arrive one at a time through the day. Finish them all, then clock out at the time clock in the Lobby. Management is watching, and might call a desk check at any moment. Talk to other workers at the water cooler, but careful: snitches are listening.';
+      body = 'Get through the day\u2019s shenanigans one task at a time, then clock out at the time clock in the Lobby. Management is watching and might call a stand-up at any moment: be at your desk. Suspect a snitch? The HR box is in the Lobby, but if you\u2019re wrong, you\u2019re fired.';
     }
     setText($('role-to'), game.me?.name ?? 'You');
     setText($('role-title'), title);
@@ -624,7 +630,7 @@ export class UI {
 
     const cards = [...game.roster.values()].map((p) => {
       const inOffice = p.status === STATUS.ACTIVE || (results && p.id === results.ejectedId);
-      const note = !inOffice ? (p.status === STATUS.HOME ? 'Clocked out' : 'Sent home')
+      const note = !inOffice ? (p.status === STATUS.HOME ? 'Clocked out' : 'Fired')
         : m.voted.includes(p.id) ? 'Voted' : m.voters.includes(p.id) ? 'Thinking\u2026' : '';
       const ballots = ballotsFor(p.id);
       const teamRole = game.teamRoleOf(p.id);
@@ -653,10 +659,10 @@ export class UI {
       if (results.ejectedId) {
         const name = game.nameOf(results.ejectedId);
         if (results.ejectedRole === ROLE.MANAGEMENT) text = `${name} was Management.`;
-        else if (results.ejectedRole === ROLE.SNITCH) text = `${name} was a snitch. They're sent home.`;
-        else text = `${name} was an honest worker. They're sent home.`;
+        else if (results.ejectedRole === ROLE.SNITCH) text = `${name} was a snitch. Fired.`;
+        else text = `${name} was an honest slacker. Fired anyway.`;
       } else {
-        text = results.tie ? 'Tie vote. Nobody is sent home.' : 'Nobody was voted out.';
+        text = results.tie ? 'Tie vote. Nobody gets fired.' : 'Nobody was voted out.';
       }
       if (skips) text += ` (${skips} skipped)`;
       setText(out, text);
@@ -690,6 +696,29 @@ export class UI {
   }
 
   hideGameOver() { $('overlay-over').hidden = true; }
+
+  // ===========================================================================
+  // HR complaint form
+  // ===========================================================================
+  get hrOpen() { return !$('overlay-hr').hidden; }
+
+  showHrForm(game, onSubmit) {
+    this.hrSubmit = onSubmit;
+    this.hrPick = null;
+    $('hr-submit').disabled = true;
+    const people = [...game.roster.values()].filter((p) => p.id !== game.selfId && p.status === STATUS.ACTIVE);
+    $('hr-list').replaceChildren(...(people.length ? people.map((p) => el('li', {},
+      el('label', { class: 'hrform__row' },
+        el('input', {
+          type: 'radio', name: 'hr-pick', value: p.id,
+          onchange: () => { this.hrPick = p.id; $('hr-submit').disabled = false; },
+        }),
+        el('span', { class: 'swatch', style: `background:${COLORS[p.colorId].hex}` }),
+        el('span', {}, p.name)))) : [el('li', { class: 'em-empty' }, 'Nobody left to complain about.')]));
+    $('overlay-hr').hidden = false;
+  }
+
+  hideHrForm() { $('overlay-hr').hidden = true; }
 
   // ===========================================================================
   // Toasts & feed

@@ -32,6 +32,7 @@ export class Player {
     this.activeTask = null;       // { taskId, objectId, startedAt, duration }
     this.reportReadyAt = 0;
     this.deskCheckReadyAt = 0;
+    this.hrReportUsed = false;
     this.emergencyCallsLeft = 0;
     this.selfDirty = true;        // private state changed -> resend SELF
   }

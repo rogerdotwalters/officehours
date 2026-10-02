@@ -105,8 +105,10 @@ export const OFFICE = {
     // Lobby
     { id: 'plant',        type: 'plant',          label: 'Lobby ficus',       x: 724,  y: 624,  w: 40,  h: 40,  solid: true },
     { id: 'time_clock',   type: 'time_clock',     label: 'Time clock',        x: 760,  y: 1400, w: 50,  h: 40,  solid: true },
+    { id: 'hr_box',       type: 'hr_box',         label: 'HR complaint box',  x: 1120, y: 760,  w: 44,  h: 54,  solid: true },
     // Conference room: the all-hands bell sits on the table edge
     { id: 'bell',         type: 'meeting_bell',   label: 'All-hands bell',    x: 955,  y: 286,  w: 30,  h: 24,  solid: false },
+    { id: 'whiteboard',   type: 'whiteboard',     label: 'Whiteboard',        x: 850,  y: 14,   w: 240, h: 18,  solid: false },
     // Design studio
     { id: 'easel',        type: 'easel',          label: 'Easel',             x: 2620, y: 230,  w: 70,  h: 60,  solid: true },
     // Accounting
@@ -116,6 +118,7 @@ export const OFFICE = {
     { id: 'candy',        type: 'candy_bowl',     label: 'Candy bowl',        x: 2385, y: 772,  w: 30,  h: 26,  solid: false },
     // Mail & copy room
     { id: 'printer',      type: 'printer',        label: 'Printer',           x: 1400, y: 1044, w: 80,  h: 56,  solid: true },
+    { id: 'copier',       type: 'copier',         label: 'Copier',            x: 1520, y: 1044, w: 70,  h: 56,  solid: true },
     { id: 'mailboxes',    type: 'mailbox',        label: 'Mailboxes',         x: 1640, y: 1036, w: 180, h: 34,  solid: true },
     { id: 'supplies',     type: 'supplies',       label: 'Supply cabinet',    x: 1400, y: 1396, w: 90,  h: 60,  solid: true },
     { id: 'shredder',     type: 'shredder',       label: 'Shredder',          x: 1872, y: 1380, w: 50,  h: 70,  solid: true },
@@ -134,7 +137,6 @@ export const OFFICE = {
     { kind: 'bookshelf',  x: 520,  y: 30,  w: 50, h: 100, solid: true },
     // Conference room
     { kind: 'table',      x: 810,  y: 150, w: 320, h: 160, solid: true },
-    { kind: 'whiteboard', x: 850,  y: 14,  w: 240, h: 18 },
     // Office B
     { kind: 'plant',      x: 1880, y: 380, w: 34, h: 34, solid: true },
     { kind: 'copier',     x: 1360, y: 360, w: 70, h: 56, solid: true },
@@ -166,7 +168,6 @@ export const OFFICE = {
     { kind: 'bookshelf',  x: 2740, y: 640,  w: 50, h: 140, solid: true },
     { kind: 'plant',      x: 2070, y: 960,  w: 40, h: 40, solid: true },
     // Mail & copy room
-    { kind: 'copier',     x: 1520, y: 1044, w: 70, h: 56, solid: true },
     // Outside: lawn
     { kind: 'tree',       x: 80,   y: 1640, w: 110, h: 110, solid: true },
     { kind: 'tree',       x: 420,  y: 1840, w: 120, h: 120, solid: true },

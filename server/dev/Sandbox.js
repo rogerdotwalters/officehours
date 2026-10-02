@@ -215,8 +215,8 @@ const COMMANDS = {
     return 'Cooldowns reset.';
   },
   deskCheck(game, _p, _msg, now) {
-    if (game.phase !== PHASE.PLAYING) return 'Desk checks only happen during the workday.';
-    if (game.deskCheck) return 'A desk check is already underway.';
+    if (game.phase !== PHASE.PLAYING) return 'Stand-ups only happen during the workday.';
+    if (game.deskCheck) return 'A stand-up is already happening.';
     game.deskCheck = { endsAt: now + game.match.deskCheckWarning * 1000, startedAt: now };
     const mgmt = [...game.players.values()].find((o) => o.isManagement);
     if (mgmt) { mgmt.deskCheckReadyAt = Infinity; mgmt.selfDirty = true; }

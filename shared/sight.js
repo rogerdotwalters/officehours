@@ -9,6 +9,7 @@
  * see over.
  */
 import { PLAYER_RADIUS } from './constants.js';
+import { distPointRect } from './mapBuilder.js';
 
 const SHRINK = 0.5; // ignore rays that only graze a wall's surface
 
@@ -35,6 +36,17 @@ export function lineOfSight(map, ax, ay, bx, by) {
     if (segmentHitsRect(ax, ay, bx, by, w)) return false;
   }
   return true;
+}
+
+/**
+ * Can someone at (x, y) use object `o`? Close enough, and no wall between them
+ * and the nearest point of it (no using the toilet from the lawn).
+ */
+export function canReach(map, x, y, o, range) {
+  if (distPointRect(x, y, o) > range) return false;
+  const nx = Math.max(o.x, Math.min(o.x + o.w, x));
+  const ny = Math.max(o.y, Math.min(o.y + o.h, y));
+  return lineOfSight(map, x, y, nx, ny);
 }
 
 /**

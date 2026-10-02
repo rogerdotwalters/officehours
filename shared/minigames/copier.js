@@ -1,8 +1,18 @@
 /**
  * Copier: drag each document from the stack onto the glass and press Copy.
- * The documents are, of course, nonsense. Add your own below.
+ *   productive: real work documents
+ *   slacker:    nonsense (and the copies end up all over the floor)
+ * Add your own to the lists below.
  */
-const DOCS = [
+const WORK_DOCS = [
+  { title: 'Q3 REPORT', body: 'Revenue up 4%. Costs down 2%. Morale: stable. Coffee budget: exceeded.' },
+  { title: 'MEETING AGENDA', body: '1. Welcome. 2. Project updates. 3. Next steps. 4. Any other business.' },
+  { title: 'SAFETY MEMO', body: 'Please keep fire exits clear and report any spills to Facilities.' },
+  { title: 'CLIENT PROPOSAL', body: 'Scope, timeline and budget for the spring campaign. Draft 3.' },
+  { title: 'ONBOARDING CHECKLIST', body: 'Laptop, badge, desk, welcome lunch. Introduce to the team.' },
+  { title: 'BUDGET SUMMARY', body: 'Department budgets for next quarter. Please review before Friday.' },
+];
+const SILLY_DOCS = [
   { title: 'PETITION', body: 'Replace the stairs with a slide. Signed: Linda, Kev, Priya, the cat.' },
   { title: 'EMPLOYEE OF THE MONTH', body: 'Nominee: Gary. Nominated by: Gary. Seconded by: Gary. (4th attempt)' },
   { title: 'LOST: ONE STAPLER', body: 'Red. Answers to "Stapler". If found, please do NOT return it to Gary.' },
@@ -17,10 +27,12 @@ const DOCS = [
   { title: 'RESIGNATION LETTER', body: 'Dear Management, I quit. Just kidding. Unless...? Love, Accounting.' },
 ];
 
-export function generateCopier(rand) {
+export function generateCopier(rand, variant = 'productive') {
+  const DOCS = variant === 'slacker' ? SILLY_DOCS : WORK_DOCS;
   const count = 3 + Math.floor(rand() * 2);
   const picks = DOCS.map((d, i) => [rand(), i]).sort((a, b) => a[0] - b[0]).slice(0, count);
   return {
+    variant,
     docs: picks.map(([, i], k) => ({ id: `d${k}`, ...DOCS[i] })),
     jam: Math.floor(rand() * count), // which copy jams first (it always does)
   };

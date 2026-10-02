@@ -16,8 +16,8 @@ export const LOBBY_ROOM = {
   meetingSeats: [],
 
   decor: [
-    { kind: 'elevator',   x: 110, y: 12,  w: 130, h: 22 },
-    { kind: 'elevator',   x: 760, y: 12,  w: 130, h: 22 },
+    { kind: 'elevator',   x: 110, y: 12,  w: 130, h: 1, wall: true },
+    { kind: 'elevator',   x: 760, y: 12,  w: 130, h: 1, wall: true },
     { kind: 'reception',  x: 390, y: 90,  w: 220, h: 50, solid: true },
     { kind: 'rug',        x: 330, y: 280, w: 340, h: 160 },
     { kind: 'table',      x: 440, y: 330, w: 120, h: 60, solid: true },
@@ -28,7 +28,7 @@ export const LOBBY_ROOM = {
     { kind: 'plant',      x: 30,  y: 30,  w: 40,  h: 40, solid: true },
     { kind: 'plant',      x: 930, y: 30,  w: 40,  h: 40, solid: true },
     { kind: 'plant',      x: 470, y: 610, w: 40,  h: 40, solid: true },
-    { kind: 'whiteboard', x: 640, y: 12,  w: 90,  h: 18 },
+    { kind: 'poster', text: 'WELCOME!', x: 620, y: 12, w: 110, h: 1, wall: true, color: '#2d8a54' },
   ],
 
   spawnPoints: [

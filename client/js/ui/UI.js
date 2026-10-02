@@ -7,15 +7,16 @@
  * innerHTML, so it can't inject markup.
  */
 import { COLORS, PHASE, STATUS, ROLE } from '../../shared/constants.js';
-import { TASKS_BY_ID, TARGET_HINT, rarityOf } from '../../shared/tasks.js';
-import { SETTINGS_SPEC, effectiveSnitches } from '../../shared/settings.js';
+import { TASKS_BY_ID, TARGET_HINT, rarityOf, taskVersion, SHENANIGANS } from '../../shared/tasks.js';
+import { PRANK_CONTENT } from '../../shared/minigames/prank.js';
+import { SETTINGS_SPEC, effectiveSlackers } from '../../shared/settings.js';
 
 const $ = (id) => document.getElementById(id);
 const PENDING_MS = 1500;
 const EMPTY_CHAT = {
   all: 'No messages yet.',
-  team: 'Nothing yet. Tip each other off about who is where.',
-  crew: 'Nothing yet. Compare notes on who is acting suspicious, but remember snitches are listening.',
+  team: 'Nothing yet. Coordinate your shenanigans. Nobody else can see this.',
+  crew: 'Nothing yet. Compare notes on who smells like fish. (Careful: slackers read this too.)',
 };
 const CHAT_PANEL = { team: 'team-chat', crew: 'crew-chat' }; // how long a host's local setting edit wins over the last server echo
 
@@ -91,12 +92,10 @@ export class UI {
 
     // ---- HUD / overlays ----
     $('act-use').addEventListener('click', () => this.h.onUse());
-    $('act-report').addEventListener('click', () => this.h.onReport());
-    $('act-deskcheck').addEventListener('click', () => this.h.onDeskCheck());
     $('act-team').addEventListener('click', () => this.toggleChat('team'));
     $('act-crew').addEventListener('click', () => this.toggleChat('crew'));
     for (const btn of document.querySelectorAll('[data-close-chat]')) btn.addEventListener('click', () => this.closeChats());
-    // Snitches sit in both chats; let them hop between them without closing first.
+    // Slackers have both chats; let them hop between them without closing first.
     for (const btn of document.querySelectorAll('[data-switch-chat]')) btn.addEventListener('click', () => this.toggleChat(btn.dataset.switchChat, true));
     $('meeting-skip').addEventListener('click', () => this.h.onVote('skip'));
     $('over-lobby').addEventListener('click', () => this.h.onReturnToLobby());
@@ -263,14 +262,15 @@ export class UI {
       plus.disabled = !host || v >= spec.max;
     }
     const players = game.room.players.length;
-    const snitches = effectiveSnitches({ snitches: this.settingValue(game, 'snitches', now) }, players);
+    const slackers = effectiveSlackers({ slackers: this.settingValue(game, 'slackers', now) }, players);
     const minutes = this.settingValue(game, 'workdayMinutes', now);
     const tasks = this.settingValue(game, 'tasks', now);
     const perTask = Math.round((minutes * 60) / tasks);
+    const days = this.settingValue(game, 'days', now);
     setText($('settings-note'),
       `${host ? 'You set the rules for everyone.' : 'The host sets these.'} `
-      + `A new task every ${perTask} seconds. With ${players} ${players === 1 ? 'person' : 'people'}, `
-      + `${snitches === 0 ? 'there would be no snitches' : `${snitches} ${snitches === 1 ? 'person' : 'people'} would be a snitch`}.`);
+      + `${days} ${days === 1 ? 'day' : 'days'} of ${minutes} minutes, a new task every ${perTask} seconds. With ${players} ${players === 1 ? 'person' : 'people'}, `
+      + `${slackers} ${slackers === 1 ? 'person' : 'people'} would secretly be a slacker.`);
   }
 
   // ===========================================================================
@@ -325,17 +325,17 @@ export class UI {
     if (game.inLobby) return;
     const self = game.self;
     const room = game.room;
-    const mgmt = game.isManagement;
     const playing = game.phase === PHASE.PLAYING;
     const day = game.dayInfo(now);
 
     // Role tag
     const roleTag = $('hud-role');
-    setText(roleTag, !self ? '' : mgmt ? 'Management' : game.isSnitch ? 'Snitch' : 'Worker');
-    roleTag.classList.toggle('is-mgmt', game.isTeam);
+    setText(roleTag, !self ? '' : game.isSlacker ? 'Slacker' : 'Productive');
+    roleTag.classList.toggle('is-mgmt', game.isSlacker);
 
     const brk = game.breakInfo(now);
-    this.renderTasks(game, day, brk);
+    if (game.isSlacker) this.renderShenanigans(game, now);
+    else this.renderTasks(game, day, brk);
     this.renderClock(game, day, brk);
     this.renderBreak(game, brk, playing);
 
@@ -345,29 +345,14 @@ export class UI {
     if (cam.spectating) where = `Watching ${game.nameOf(cam.spectating)}`;
     setText($('hud-room'), where);
     const progress = room?.progress;
-    setText($('hud-progress'), progress ? `${progress.home} of ${progress.goal} clocked out` : '');
-
-    // Desk check banner
-    const dcLeft = game.deskCheckLeft(now);
-    const dcBox = $('hud-deskcheck');
-    setHidden(dcBox, dcLeft == null || !playing);
-    document.body.classList.toggle('is-deskcheck', dcLeft != null && playing);
-    if (dcLeft != null) {
-      let body;
-      if (mgmt) body = 'Anyone away from their desk when this hits zero is fired.';
-      else if (!game.inOffice) body = 'Everyone in the office has to be at their desk.';
-      else body = (frame.atDesk ? "You're at your desk. Look busy." : 'Get to your desk or you\u2019re fired!');
-      setText(dcBox.querySelector('.deskcheck__body'), body);
-      setText(dcBox.querySelector('.deskcheck__count'), String(Math.ceil(dcLeft / 1000)));
-      dcBox.classList.toggle('is-safe', !!frame.atDesk && !mgmt);
-    }
+    this.renderMeters(progress);
 
     // Status banner
     let banner = '';
     const freezeLeft = (self?.freezeUntil ?? 0) - now;
     const watch = this.isTouch ? 'Tap Watch to follow someone else.' : 'Press E to watch someone else.';
-    if (self?.status === STATUS.HOME) banner = `You clocked out. Enjoy your evening. ${watch}`;
-    else if (self?.status === STATUS.SENT_HOME) banner = `You're fired! Clear out your desk. ${watch}`;
+    if (self?.status === STATUS.SENT_HOME) banner = `You're fired! Clear out your desk. ${watch}`;
+    else if (self?.status === STATUS.SICK) banner = `You went home sick. Back tomorrow. ${watch}`;
     else if (playing && freezeLeft > 0) banner = `Back to work in ${Math.ceil(freezeLeft / 1000)}`;
     setText($('hud-status'), banner);
     setHidden($('hud-status'), !banner || !$('overlay-role').hidden);
@@ -393,7 +378,7 @@ export class UI {
     // Task progress bar (extrapolated between server updates)
     const bar = $('hud-taskbar');
     if (self?.active && playing) {
-      const def = TASKS_BY_ID.get(self.active.taskId);
+      const def = game.version(self.active.taskId);
       const p = Math.min(1, self.active.progress + (now - self.receivedAt) / def.duration);
       bar.firstElementChild.style.width = `${(p * 100).toFixed(1)}%`;
       setText(bar.lastElementChild, `${def.label}. Move to cancel.`);
@@ -415,9 +400,11 @@ export class UI {
     const key = JSON.stringify([tasks, activeId, game.role, self?.status, total, brk.current?.id, brk.next?.id]);
     if (key !== this.keys.tasks) {
       this.keys.tasks = key;
+      setText($('hud-task-title'), 'To do');
+      $('hud-tasks').classList.remove('is-slacker');
       setText($('hud-task-count'), total ? `${doneCount}/${total}` : '');
       const items = tasks.map((t) => {
-        const def = TASKS_BY_ID.get(t.id);
+        const def = game.version(t.id);
         const rarity = rarityOf(def);
         const breakOnly = def.during === 'break';
         const waits = breakOnly && !t.done && !brk.current && brk.next;
@@ -428,13 +415,6 @@ export class UI {
             def.minigame ? el('em', { class: 'rarity rarity--game' }, 'puzzle') : null,
             el('small', {}, `${TARGET_HINT[def.target] ?? ''}${waits ? `. Wait for ${brk.next.label.toLowerCase()}` : ''}`)));
       });
-      if (allDone && !game.isTeam && self.status === STATUS.ACTIVE) {
-        items.push(el('li', { class: 'active clockout' }, el('span', {}, 'Clock out', el('small', {}, 'time clock, Lobby'))));
-      }
-      if (game.isTeam) {
-        items.push(el('li', { class: 'fake' }, el('span', {},
-          'Your cover story. These tasks don\u2019t count, but doing them helps you blend in.')));
-      }
       $('hud-task-list').replaceChildren(...items);
     }
 
@@ -452,7 +432,50 @@ export class UI {
     setHidden($('hud-next'), !next);
   }
 
-  /** Break banner: what's safe right now and how long is left. */
+  /** Slackers: no to-do list, a menu of shenanigans instead. */
+  renderShenanigans(game, now) {
+    const self = game.self;
+    const wait = Math.max(0, (self?.receivedAt ?? 0) + (self?.shenaniganReadyIn ?? 0) - now);
+    const key = JSON.stringify([self?.prankedToday, self?.status, Math.ceil(wait / 1000) > 0]);
+    if (key !== this.keys.tasks) {
+      this.keys.tasks = key;
+      setText($('hud-task-title'), 'Shenanigans');
+      setText($('hud-task-count'), '');
+      $('hud-tasks').classList.add('is-slacker');
+      $('hud-task-list').replaceChildren(...SHENANIGANS.map((s) => {
+        const used = s.oncePerDay && self?.prankedToday;
+        return el('li', { class: `shenanigan ${used ? 'done' : ''}` },
+          el('span', {}, s.label,
+            s.oncePerDay ? el('em', { class: 'rarity rarity--rare' }, 'once a day') : null,
+            el('small', {}, TARGET_HINT[s.target] ?? '')));
+      }));
+    }
+    const note = self?.status !== STATUS.ACTIVE ? '' : wait > 0 ? `Lie low: next shenanigan in ${Math.ceil(wait / 1000)}s.` : 'Ready. Pick a target and don\u2019t get seen.';
+    setText($('hud-next'), note);
+    setHidden($('hud-next'), !note);
+  }
+
+  /** Today's meters: Productivity (with the target) and Chaos; the score is the difference. */
+  renderMeters(progress) {
+    const box = $('hud-meters');
+    setHidden(box, !progress);
+    if (!progress) return;
+    const target = `${Math.round((progress.target ?? 0) * 100)}%`;
+    const marker = box.querySelector('.meter__target');
+    if (marker.style.left !== target) marker.style.left = target;
+    const score = Math.max(0, Math.round(progress.productivity * 100) - Math.round(progress.chaos * 100));
+    const sc = box.querySelector('.meter__score');
+    setText(sc, `Today: ${score}% (target ${target})`);
+    sc.classList.toggle('is-below', score < (progress.target ?? 0) * 100);
+    for (const [cls, v] of [['prod', progress.productivity], ['chaos', progress.chaos]]) {
+      const pct = `${Math.round(v * 100)}%`;
+      const fill = box.querySelector(`.meter--${cls} .meter__fill`);
+      if (fill.style.width !== pct) fill.style.width = pct;
+      setText(box.querySelector(`.meter--${cls} .meter__pct`), pct);
+    }
+  }
+
+  /** Break banner: what's on and how long is left. */
   renderBreak(game, brk, playing) {
     const box = $('hud-break');
     const show = playing && !!brk.current;
@@ -460,9 +483,7 @@ export class UI {
     document.body.classList.toggle('is-break', show);
     if (!show) return;
     setText(box.querySelector('.deskcheck__title'), brk.current.label);
-    setText(box.querySelector('.deskcheck__body'), game.isManagement
-      ? "Nobody in the Break Room or outside can be fired. No stand-ups."
-      : "You can't be fired in the Break Room or outside. No stand-ups.");
+    setText(box.querySelector('.deskcheck__body'), 'Lunch tasks are open. Grab a bite.');
     setText(box.querySelector('.deskcheck__count'), formatClock(brk.current.endMs - brk.elapsed));
   }
 
@@ -495,7 +516,8 @@ export class UI {
         style: `left:${(w.startMs / day.lengthMs) * 100}%;width:${((w.endMs - w.startMs) / day.lengthMs) * 100}%`,
       })));
     }
-    let note = `${formatClock(day.timeLeft)} left`;
+    const dayTag = game.room?.days > 1 ? `Day ${game.room.dayNumber} of ${game.room.days}. ` : '';
+    let note = `${dayTag}${formatClock(day.timeLeft)} left`;
     if (brk.current) note = `${brk.current.label} now`;
     else if (brk.next && brk.next.startMs - day.elapsed < 45_000) note = `${brk.next.label} in ${formatClock(brk.next.startMs - day.elapsed)}`;
     if (!day.running && game.phase === PHASE.MEETING) note = 'Paused';
@@ -518,48 +540,19 @@ export class UI {
       use.classList.toggle('is-idle', game.inOffice && !frame.usable?.action);
     }
 
-    // Report (Management)
-    const report = $('act-report');
-    const showReport = game.isManagement && working && !roleShowing;
-    setHidden(report, !showReport);
-    if (showReport) {
-      const cd = Math.max(0, (self.reportReadyAt ?? 0) - now);
-      const target = game.reportableTargets().find((t) => t.inRange);
-      report.disabled = cd > 0 || !target;
-      setText(report.querySelector('.act__sub'),
-        cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : target ? game.nameOf(target.id) : 'nobody to catch');
-    }
-
-    // Desk check (Management)
-    const dc = $('act-deskcheck');
-    const showDc = game.isManagement && working && !roleShowing;
-    setHidden(dc, !showDc);
-    if (showDc) {
-      const active = game.deskCheckLeft(now) != null;
-      const cd = self.deskCheckReadyAt == null ? Infinity : Math.max(0, self.deskCheckReadyAt - now);
-      const brk = game.breakInfo(now);
-      const breakSoon = brk.next && brk.next.startMs - brk.elapsed < game.settings.deskCheckWarning * 1000;
-      dc.disabled = active || cd > 0 || !!brk.current || !!breakSoon;
-      setText(dc.querySelector('.act__sub'),
-        active || cd === Infinity ? 'underway'
-          : brk.current ? 'not on a break'
-            : breakSoon ? `${brk.next.label.toLowerCase()} soon`
-              : cd > 0 ? `ready in ${Math.ceil(cd / 1000)}s` : `${game.settings.deskCheckWarning}s warning`);
-    }
-
-    // Private chats: back office (Management + snitches), water cooler (workers + snitches)
+    // Chats: water cooler (everyone), slackers' group chat (slackers with company)
     const chatsOpen = (playing || game.phase === PHASE.MEETING) && !roleShowing && !!game.role;
-    const showTeam = chatsOpen && game.isTeam;
-    const showCrew = chatsOpen && !game.isManagement;
+    const showTeam = chatsOpen && game.isSlacker && (game.self?.team?.length ?? 0) > 0;
+    const showCrew = chatsOpen;
     setHidden($('act-team'), !showTeam);
     setHidden($('act-crew'), !showCrew);
     if (!showTeam) setHidden($('team-chat'), true);
     if (!showCrew) setHidden($('crew-chat'), true);
-    for (const btn of document.querySelectorAll('[data-switch-chat]')) setHidden(btn, !game.isSnitch);
+    for (const btn of document.querySelectorAll('[data-switch-chat]')) setHidden(btn, !showTeam);
     // Unread badges for the *other* chat show on the switch button too.
     for (const btn of document.querySelectorAll('[data-switch-chat]')) {
       const n = this.unread[btn.dataset.switchChat];
-      const label = `${btn.dataset.switchChat === 'team' ? 'Back office' : 'Water cooler'}${n ? ` (${n})` : ''}`;
+      const label = `${btn.dataset.switchChat === 'team' ? 'Slacker chat' : 'Water cooler'}${n ? ` (${n})` : ''}`;
       setText(btn, label);
     }
   }
@@ -570,32 +563,22 @@ export class UI {
   showRoleReveal(game, durationMs) {
     const role = game.role;
     const team = game.self?.team ?? [];
-    const mgmtMate = team.find((t) => t.role === ROLE.MANAGEMENT);
-    const snitchMates = team.filter((t) => t.role === ROLE.SNITCH).map((t) => game.nameOf(t.id));
+    const mates = team.map((t) => game.nameOf(t.id));
     let title, body, teamLine = '';
-    if (role === ROLE.MANAGEMENT) {
-      title = "You're Management";
-      body = 'Catch workers slacking away from their desks and fire them, or call a surprise stand-up meeting and fire anyone who doesn\u2019t make it back to their desk in time. Pretend to do your tasks so nobody suspects you.';
-      teamLine = snitchMates.length
-        ? `Your snitches: ${listNames(snitchMates)}. Coordinate in the back office.`
-        : "No snitches today. You're on your own.";
-    } else if (role === ROLE.SNITCH) {
-      title = "You're a snitch";
-      body = 'Work like everyone else, but you\u2019re on Management\u2019s side. You can read and post in both the workers\u2019 water cooler and Management\u2019s back office, so pass on what you hear. You win if Management wins. Snitches can\u2019t clock out.';
-      teamLine = [
-        mgmtMate ? `Management is ${game.nameOf(mgmtMate.id)}.` : '',
-        snitchMates.length ? `Fellow snitches: ${listNames(snitchMates)}.` : '',
-      ].filter(Boolean).join(' ');
+    if (role === ROLE.SLACKER) {
+      title = "You're a slacker";
+      body = 'Everyone else is here to work. You are not. You get no to-do list: cause chaos whenever you like. Microwave fish, doodle on the whiteboard, spike the water cooler, put something unprofessional on a coworker\u2019s screen. Chaos drags the day\u2019s score down, and a bad day means someone gets fired. Survive until the end of the week.';
+      teamLine = mates.length ? `Fellow slackers: ${listNames(mates)}. Plan in your group chat.` : 'You\u2019re the only slacker. Act natural.';
     } else {
-      title = "You're a worker";
-      body = 'Get through the day\u2019s shenanigans one task at a time, then clock out at the time clock in the Lobby. Management is watching and might call a stand-up at any moment: be at your desk. Suspect a snitch? The HR box is in the Lobby, but if you\u2019re wrong, you\u2019re fired.';
+      title = "You're a productive employee";
+      body = 'Do your tasks to fill the Productivity meter, and clean up messes. Someone here is a slacker. At 5 PM, if the day missed its target, management makes the team fire someone: make sure it\u2019s the slacker. Follow the fish smell, check the whiteboard, notice who was near the cooler. You can also ring the bell or report them to HR (wrong guess, you\u2019re fired).';
     }
     setText($('role-to'), game.me?.name ?? 'You');
     setText($('role-title'), title);
     setText($('role-body'), body);
     setText($('role-team'), teamLine);
     setHidden($('role-team'), !teamLine);
-    $('overlay-role').querySelector('.memo').classList.toggle('is-mgmt', game.isTeam);
+    $('overlay-role').querySelector('.memo').classList.toggle('is-mgmt', game.isSlacker);
     $('overlay-role').hidden = false;
     clearTimeout(this.roleTimer);
     this.roleTimer = setTimeout(() => ($('overlay-role').hidden = true), Math.max(1500, durationMs));
@@ -619,21 +602,28 @@ export class UI {
     this.keys.meeting = key;
 
     const canVote = m.stage === 'discussing' && m.voters.includes(game.selfId) && !m.voted.includes(game.selfId);
+    setHidden($('meeting-cards'), m.kind === 'eod' && (m.stage === 'report' || !m.voteNeeded));
     const results = m.stage === 'results' ? m.result : null;
     const ballotsFor = (targetId) => results
       ? Object.entries(results.ballots).filter(([, t]) => t === targetId).map(([voter]) => voter)
       : [];
 
-    setText($('meeting-sub'), results
-      ? 'Votes are in.'
-      : `${game.nameOf(m.calledBy)} rang the bell. The workday clock is paused. ${m.voted.length} of ${m.voters.length} have voted.`);
+    const eod = m.kind === 'eod';
+    setText($('meeting-title'), eod ? `End of day ${m.report.day}${m.report.days > 1 ? ` of ${m.report.days}` : ''}` : 'All-hands meeting');
+    this.renderReport(game, m);
+    let sub;
+    if (results) sub = !m.voteNeeded ? 'No one gets fired today.' : 'Votes are in.';
+    else if (eod && m.stage === 'report') sub = 'Management has the numbers.';
+    else if (eod) sub = `Management wants someone fired. Pick who. No skipping. ${m.voted.length} of ${m.voters.length} have voted.`;
+    else sub = `${game.nameOf(m.calledBy)} rang the bell. The workday clock is paused. ${m.voted.length} of ${m.voters.length} have voted.`;
+    setText($('meeting-sub'), sub);
 
     const cards = [...game.roster.values()].map((p) => {
       const inOffice = p.status === STATUS.ACTIVE || (results && p.id === results.ejectedId);
-      const note = !inOffice ? (p.status === STATUS.HOME ? 'Clocked out' : 'Fired')
+      const note = !inOffice ? 'Fired'
         : m.voted.includes(p.id) ? 'Voted' : m.voters.includes(p.id) ? 'Thinking\u2026' : '';
       const ballots = ballotsFor(p.id);
-      const teamRole = game.teamRoleOf(p.id);
+      const mate = game.isTeammate(p.id);
       return el('li', {},
         el('button', {
           class: `vote-card ${inOffice ? '' : 'is-out'} ${results?.ballots?.[game.selfId] === p.id ? 'is-mine' : ''}`,
@@ -642,7 +632,7 @@ export class UI {
         },
         el('span', { class: 'swatch', style: `background:${COLORS[p.colorId].hex}` }),
         el('span', {}, p.name, p.id === game.selfId ? ' (you)' : '',
-          teamRole ? el('em', { class: 'team-mark' }, teamRole === ROLE.MANAGEMENT ? 'Management' : 'Snitch') : null,
+          mate ? el('em', { class: 'team-mark' }, 'Slacker') : null,
           el('small', {}, note),
           ballots.length ? el('span', { class: 'ballots' }, ballots.map((v) => el('i', { style: `background:${game.colorOf(v)}`, title: game.nameOf(v) }))) : null)));
     });
@@ -650,7 +640,7 @@ export class UI {
 
     const skip = $('meeting-skip');
     skip.disabled = !canVote;
-    setHidden(skip, !!results);
+    setHidden(skip, !!results || m.kind === 'eod');
 
     const out = $('meeting-result');
     if (results) {
@@ -658,9 +648,11 @@ export class UI {
       let text;
       if (results.ejectedId) {
         const name = game.nameOf(results.ejectedId);
-        if (results.ejectedRole === ROLE.MANAGEMENT) text = `${name} was Management.`;
-        else if (results.ejectedRole === ROLE.SNITCH) text = `${name} was a snitch. Fired.`;
-        else text = `${name} was an honest slacker. Fired anyway.`;
+        if (results.ejectedRole === ROLE.SLACKER) text = `${name} was a slacker. Fired!`;
+        else text = `${name} was a productive employee. Fired anyway. Oops.`;
+        if (results.drawn) text = `${results.tie ? 'Tie vote' : 'Nobody voted'}, so management picked at random. ${text}`;
+      } else if (m.kind === 'eod' && !m.voteNeeded) {
+        text = m.report.day >= m.report.days ? 'The week is over.' : 'Good work today. See you tomorrow.';
       } else {
         text = results.tie ? 'Tie vote. Nobody gets fired.' : 'Nobody was voted out.';
       }
@@ -672,22 +664,45 @@ export class UI {
     }
   }
 
+  /** The end-of-day numbers, IT's findings, and the verdict. */
+  renderReport(game, m) {
+    const box = $('meeting-report');
+    setHidden(box, m.kind !== 'eod');
+    if (m.kind !== 'eod') return;
+    const r = m.report;
+    const key = JSON.stringify(r);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    const below = r.score < r.target;
+    const bar = (label, v, cls) => el('div', { class: `eod-row eod-row--${cls}` },
+      el('span', {}, label), el('i', {}, el('b', { style: `width:${Math.min(100, v)}%` })), el('strong', {}, `${v}%`));
+    box.replaceChildren(
+      bar('Productivity', r.productivity, 'prod'),
+      bar(`Chaos${r.messes ? ` (incl. ${r.messes} mess${r.messes === 1 ? '' : 'es'} left)` : ''}`, r.chaos, 'chaos'),
+      el('p', { class: `eod-score ${below ? 'is-below' : ''}` }, `Score ${r.score}%. Target ${r.target}%.`,
+        el('span', {}, below ? ' Management is not happy. Someone has to go.' : ' Management is satisfied. For now.')),
+      ...r.itFired.map((f) => {
+        const c = PRANK_CONTENT.find((x) => x.id === f.content);
+        return el('p', { class: 'eod-it' }, el('b', {}, 'IT report: '),
+          `${f.id === game.selfId ? 'you had' : `${f.name} had`} "${c?.label ?? 'something'}" on ${f.id === game.selfId ? 'your' : 'their'} screen. `,
+          el('span', { class: 'eod-censor' }, 'CENSORED'), ` ${f.id === game.selfId ? 'You\u2019re' : `${f.name} is`} fired.`);
+      }));
+  }
+
   // ===========================================================================
   // Game over
   // ===========================================================================
   showGameOver(result, game) {
-    const snitchIds = (result.snitches ?? []).map((s) => s.id);
-    const iWasTeam = result.managementId === game.selfId || snitchIds.includes(game.selfId);
-    const won = (result.winner === 'management') === iWasTeam;
-    setText($('over-title'), result.winner === 'workers' ? 'Workers win' : 'Management wins');
+    const slackerIds = (result.slackers ?? []).map((s) => s.id);
+    const iWasSlacker = slackerIds.includes(game.selfId);
+    const won = (result.winner === 'slackers') === iWasSlacker;
+    setText($('over-title'), result.winner === 'slackers' ? 'Slackers win' : 'Productive employees win');
     setText($('over-reason'), `${result.reason} ${won ? 'You won.' : 'You lost.'}`);
     const you = (id, name) => (id === game.selfId ? 'you' : name);
-    let reveal = result.managementName ? `Management was ${you(result.managementId, result.managementName)}.` : '';
-    if (result.snitches?.length) {
-      reveal += ` ${result.snitches.length === 1 ? 'The snitch was' : 'The snitches were'} ${listNames(result.snitches.map((s) => you(s.id, s.name)))}.`;
-    }
-    setText($('over-mgmt'), reveal.trim());
-    $('overlay-over').querySelector('.memo').classList.toggle('is-mgmt', result.winner === 'management');
+    const reveal = `${slackerIds.length === 1 ? 'The slacker was' : 'The slackers were'} ${listNames(result.slackers.map((s) => you(s.id, s.name)))}.`
+      + (result.day ? ` It ended on day ${result.day}.` : '');
+    setText($('over-mgmt'), reveal);
+    $('overlay-over').querySelector('.memo').classList.toggle('is-mgmt', result.winner === 'slackers');
     setHidden($('over-lobby'), !game.isHost);
     setHidden($('over-wait'), game.isHost);
     $('overlay-meeting').hidden = true;

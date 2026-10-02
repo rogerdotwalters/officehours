@@ -12,7 +12,7 @@
 import { C2S, S2C } from '../../shared/protocol.js';
 import { PHASE, ROLE } from '../../shared/constants.js';
 import { SETTINGS_SPEC } from '../../shared/settings.js';
-import { TASKS } from '../../shared/tasks.js';
+import { TASKS, taskVersion } from '../../shared/tasks.js';
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -27,9 +27,8 @@ function el(tag, props = {}, ...children) {
 
 const ROLE_CHOICES = [
   ['random', 'Random'],
-  [ROLE.WORKER, 'Worker'],
-  [ROLE.MANAGEMENT, 'Management'],
-  [ROLE.SNITCH, 'Snitch'],
+  [ROLE.PRODUCTIVE, 'Productive'],
+  [ROLE.SLACKER, 'Slacker'],
 ];
 const PLACES = [
   ['desk', 'My desk'],
@@ -37,6 +36,9 @@ const PLACES = [
   ['time_clock', 'Time clock'],
   ['fridge', 'Fridge (puzzle)'],
   ['microwave', 'Microwave (puzzle)'],
+  ['microwave_2', 'Second microwave'],
+  ['cooler_mid', 'Water cooler (puzzle)'],
+  ['other_desk', 'A coworker\u2019s desk (prank)'],
   ['cat_bowl', 'Cat bowl (puzzle)'],
   ['dumpster', 'Recycling bin (puzzle)'],
   ['copier', 'Copier (puzzle)'],
@@ -58,7 +60,7 @@ const PLACES = [
   ['lawn', 'Lawn (outside)'],
   ['parking', 'Parking Lot (outside)'],
 ];
-const QUICK_SETTINGS = ['playerSpeed', 'sightRange', 'reportRange', 'deskCheckWarning'];
+const QUICK_SETTINGS = ['playerSpeed', 'sightRange'];
 
 /**
  * @param {{ net, game, ui, enterRoom: (code, name) => void, leaveRoom: () => void }} ctx
@@ -127,8 +129,8 @@ export function install(ctx) {
           ? buttons([['Start now, even alone', () => send('start'), 'primary']])
           : buttons([
             ['Back to the waiting room', () => send('lobby')],
-            ['End: workers win', () => send('end', { winner: 'workers' })],
-            ['End: Management wins', () => send('end', { winner: 'management' })],
+            ['End: productive win', () => send('end', { winner: 'productive' })],
+            ['End: slackers win', () => send('end', { winner: 'slackers' })],
           ]),
         toggle('Real win rules', sbx.realWins, (v) => send('realWins', { on: v }),
           'Off: the match only ends when you end it. On: normal win conditions apply.')),
@@ -144,14 +146,14 @@ export function install(ctx) {
           ['Finish my tasks', () => send('finishTasks')],
           ['Start the next break', () => send('nextBreak')],
           ['Jump to 4:50 PM', () => send('almostFive')],
+          ['End the day now (5 PM report)', () => send('endDay')],
         ])),
 
-      inMatch && section('Management and meetings',
+      inMatch && section('Meetings and HR',
         buttons([
-          ['Reset all cooldowns', () => send('cooldowns')],
-          ['Stand-up meeting now', () => send('deskCheck')],
           ['Call a meeting now', () => send('meeting')],
           ['End the meeting', () => send('endMeeting')],
+          ['Reset bell, HR and shenanigan cooldowns', () => send('cooldowns')],
         ])),
 
       inMatch && section('Move me',
@@ -163,7 +165,7 @@ export function install(ctx) {
           'Ignore the sight range so you can watch what everyone is doing.')),
 
       section(`Dummies (${sbx.dummies})`,
-        el('p', { class: 'sbx-note' }, 'Stand-in players for firing, stand-ups, HR complaints and chats. They don\u2019t vote.'),
+        el('p', { class: 'sbx-note' }, 'Stand-in players for meetings, HR complaints and chats. They don\u2019t vote.'),
         buttons([
           ['Add a dummy', () => send('addDummy')],
           ['Remove all dummies', () => send('clearDummies')],
@@ -214,7 +216,10 @@ export function install(ctx) {
 
   function taskBlock() {
     const select = el('select', { class: 'sbx-select', 'aria-label': 'Task' },
-      TASKS.map((t) => el('option', { value: t.id }, `${t.label}${t.minigame ? ' (puzzle)' : ''}`)));
+      TASKS.map((t) => {
+        const v = taskVersion(t, game.role ?? 'productive');
+        return el('option', { value: t.id }, `${v.label}${v.minigame ? ' (puzzle)' : ''}`);
+      }));
     return el('div', { class: 'sbx-row' }, select,
       el('button', { type: 'button', class: 'sbx-btn', onclick: () => send('giveTask', { taskId: select.value }) }, 'Give'));
   }

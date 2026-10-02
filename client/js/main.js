@@ -12,8 +12,8 @@ import { TaskWindow } from './minigames/TaskWindow.js';
 import { EmoteMenu } from './ui/EmoteMenu.js';
 import { C2S, S2C, PFLAG } from '../shared/protocol.js';
 import { PHASE, INTERACT_RANGE, ROOM_CODE_LENGTH, ROLE } from '../shared/constants.js';
-import { distPointRect } from '../shared/mapBuilder.js';
-import { TASKS_BY_ID } from '../shared/tasks.js';
+import { canReach } from '../shared/sight.js';
+import { TASKS_BY_ID, taskVersion } from '../shared/tasks.js';
 
 const net = new Network();
 const game = new ClientGame();
@@ -23,6 +23,8 @@ const minimap = new Minimap(document.getElementById('hud-minimap'));
 const lobbyPanel = document.getElementById('lobby-panel');
 const taskWindow = new TaskWindow({
   onSubmit: (answer) => net.send(C2S.MINIGAME, { answer }),
+  // The whiteboard streams your strokes so people who can see the board watch you draw.
+  onProgress: (data) => net.send(C2S.WB_INK, { ink: data.ink }),
   onClose: () => { net.send(C2S.CANCEL); taskWindow.close(); },
 });
 const chat = { all: [], team: [], crew: [] };
@@ -58,8 +60,6 @@ const ui = new UI({
   onChat: (text, channel) => net.send(C2S.CHAT, { text, channel }),
   onVote: (targetId) => net.send(C2S.VOTE, { targetId }),
   onUse: () => interact(),
-  onReport: () => report(),
-  onDeskCheck: () => deskCheck(),
   onReturnToLobby: () => net.send(C2S.RETURN_TO_LOBBY),
   async onCopyCode() {
     const url = `${location.origin}${location.pathname}?room=${game.room?.code}`;
@@ -108,20 +108,6 @@ function interact() {
   net.send(C2S.INTERACT, { objectId: usable.object.id });
 }
 
-function report(targetId) {
-  if (!game.isManagement || !game.inOffice) return;
-  const now = performance.now();
-  if ((game.self.reportReadyAt ?? 0) > now) return ui.toast('Firing is on cooldown.', 1200);
-  const id = targetId ?? game.reportableTargets().find((t) => t.inRange)?.id;
-  if (!id) return ui.toast('Nobody nearby is away from their desk.', 1500);
-  net.send(C2S.REPORT, { targetId: id });
-}
-
-function deskCheck() {
-  if (!game.isManagement || !game.inOffice) return;
-  net.send(C2S.DESK_CHECK);
-}
-
 function openHrForm() {
   ui.showHrForm(game, (targetId) => net.send(C2S.HR_REPORT, { targetId }));
 }
@@ -130,23 +116,20 @@ const emotes = new EmoteMenu({ onPick: (id) => net.send(C2S.EMOTE, { emote: id }
 
 const input = new Input(canvas, {
   onInteract: interact,
-  onReport: () => report(),
-  onDeskCheck: deskCheck,
   // T opens your main private chat (water cooler, or back office for Management); B the back office.
   onChatKey(which) {
     if (game.inLobby || !game.role) return;
-    if (which === 'team') return game.isTeam && ui.toggleChat('team');
-    ui.toggleChat(game.isManagement ? 'team' : 'crew');
+    if (which === 'team') return game.isSlacker && ui.toggleChat('team');
+    ui.toggleChat('crew');
   },
   onCancel: () => net.send(C2S.CANCEL),
   onClick(sx, sy) {
     if (game.inLobby) return;
     const w = renderer.screenToWorld(sx, sy);
-    const pid = game.playerAt(w.x, w.y);
-    if (pid && pid !== game.selfId && game.isManagement) return report(pid);
-    const obj = game.interactableAt(w.x, w.y);
+    const pid = renderer.playerAt(game, w.x, w.y);
+    const obj = renderer.objectAt(game.map, w.x, w.y);
     if (!obj || !game.local) return;
-    if (distPointRect(game.local.x, game.local.y, obj) > INTERACT_RANGE) return ui.toast('Walk closer to use that.', 1200);
+    if (!canReach(game.map, game.local.x, game.local.y, obj, INTERACT_RANGE)) return ui.toast('Walk closer to use that.', 1200);
     if (obj.type === 'hr_box' && game.actionFor(obj)) return openHrForm();
     net.send(C2S.INTERACT, { objectId: obj.id });
   },
@@ -176,6 +159,7 @@ net.on(S2C.ROOM, (room) => {
 
 net.on(S2C.GAME_START, () => {
   game.reset();
+  game.board = { live: null, final: null };
   chat.all = [];
   chat.team = [];
   chat.crew = [];
@@ -197,6 +181,11 @@ net.on(S2C.SELF, (self) => {
 
 net.on(S2C.SNAPSHOT, (snap) => game.applySnapshot(snap, performance.now()));
 net.on(S2C.EMOTE, (e) => game.emotes.set(e.playerId, { emote: e.emote, at: performance.now() }));
+net.on(S2C.BOARD, (b) => {
+  game.board ??= { live: null, final: null };
+  if ('live' in b) game.board.live = b.live;
+  if ('final' in b) game.board.final = b.final;
+});
 
 net.on(S2C.MEETING, (m) => {
   game.meeting = m.stage === 'closed' ? null : { ...m, receivedAt: performance.now() };
@@ -219,27 +208,24 @@ net.on(S2C.EVENT, (e) => {
   switch (e.kind) {
     case 'new_task': {
       const def = TASKS_BY_ID.get(e.taskId);
-      return ui.feed(`${e.last ? 'Last task of the day' : 'New task'}: ${def?.label ?? 'something'}.`);
+      return ui.feed(`${e.last ? 'Last task of the day' : 'New task'}: ${def ? taskVersion(def, game.role).label : 'something'}.`);
     }
-    case 'reported': return ui.feed(`${who} got caught slacking in the ${e.where === 'Hallway' ? 'hallway' : e.where} and ${you ? 'were' : 'was'} fired.`, 'bad');
-    case 'went_home': return ui.feed(`${who} clocked out for the day.`, 'good');
+    case 'reported': return ui.feed(`${who} ${you ? 'were' : 'was'} fired.`, 'bad');
     case 'meeting': return ui.feed(`${who} called an all-hands meeting.`);
-    case 'desk_check':
-      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
-      return ui.feed(`Stand-up meeting! Everyone has ${e.seconds} seconds to get to their desk.`, 'bad');
-    case 'desk_check_done': {
-      const names = e.caught.map((c) => (c.id === game.selfId ? 'you' : c.name));
-      return ui.feed(names.length ? `Stand-up's over. Fired for not showing up: ${names.join(', ')}.` : 'Stand-up\u2019s over. Everyone made it to their desk.', names.length ? 'bad' : 'good');
-    }
+    case 'evidence': return ui.feed(e.text, 'bad');
+    case 'cleaned': return ui.feed(`Someone cleaned up the mess in the ${e.where}.`, 'good');
+    case 'sick': return ui.feed(`${who} suddenly sprinted for the restroom, then went home sick.`, 'bad');
+    case 'end_of_day': return ui.feed(`5 PM. Time for the end-of-day report.`);
+    case 'new_day': return ui.feed(`Day ${e.day} of ${e.days}. Back to work.`, 'good');
     case 'ejected': {
-      const what = e.role === ROLE.MANAGEMENT ? 'Management' : e.role === ROLE.SNITCH ? 'a snitch' : 'a worker';
+      const what = e.role === ROLE.SLACKER ? 'a slacker' : 'a productive employee';
       return ui.feed(`${who} ${you ? 'were' : 'was'} voted out. ${you ? 'You were' : 'They were'} ${what}.`, 'bad');
     }
     case 'left': return ui.feed(`${e.name} left the building.`);
     case 'hr':
-      if (e.outcome === 'snitch') return ui.feed(`HR investigated a complaint: ${you ? 'you were' : `${e.name} was`} a snitch, and ${you ? 'are' : 'is'} fired.`, 'good');
+      if (e.outcome === 'slacker') return ui.feed(`HR investigated a complaint: ${you ? 'you were' : `${e.name} was`} a slacker, and ${you ? 'are' : 'is'} fired.`, 'good');
       return ui.feed(`${you ? 'You' : e.name} filed a false HR complaint about ${e.accusedId === game.selfId ? 'you' : e.accused}. HR fired ${you ? 'you' : 'them'}.`, 'bad');
-    case 'break_start': return ui.feed(`${e.label} time. You're safe in the Break Room and outside.`, 'good');
+    case 'break_start': return ui.feed(`${e.label} time! Lunch tasks are open.`, 'good');
     case 'break_end': return ui.feed(`${e.label} is over. Back to work.`);
   }
 });

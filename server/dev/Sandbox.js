@@ -16,11 +16,13 @@ import { PHASE, STATUS, ROLE, COLORS, MAX_PLAYERS, CHAT_MAX } from '../../shared
 import { S2C } from '../../shared/protocol.js';
 import { sanitizeSettings, SETTINGS_SPEC } from '../../shared/settings.js';
 import { positionBlocked } from '../../shared/physics.js';
+import { canReach } from '../../shared/sight.js';
+import { INTERACT_RANGE } from '../../shared/constants.js';
 import { Player } from '../game/Player.js';
-import { TASKS_BY_ID } from '../../shared/tasks.js';
+import { TASKS_BY_ID, taskVersion } from '../../shared/tasks.js';
 import { randomId } from '../game/random.js';
 
-const ROLES = new Set([ROLE.WORKER, ROLE.MANAGEMENT, ROLE.SNITCH]);
+const ROLES = new Set([ROLE.PRODUCTIVE, ROLE.SLACKER]);
 const WANDER_DIRS = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
 
 /** Per-room sandbox state, created lazily. */
@@ -79,7 +81,7 @@ export function seatNewcomer(game, p, now) {
   const role = state(game).prefs.get(p.id);
   if (role) assignRole(game, p, role, now);
   p.selfDirty = true;
-  for (const o of game.players.values()) if (o.isTeam) o.selfDirty = true;
+  for (const o of game.players.values()) if (o.isSlacker) o.selfDirty = true;
   game.roomDirty = true;
 }
 
@@ -145,7 +147,7 @@ const COMMANDS = {
   },
   end(game, _p, { winner }, now) {
     if (!inMatch(game)) return 'No match running.';
-    game.endGame(winner === 'management' ? 'management' : 'workers', 'Ended from the test tools.', now);
+    game.endGame(winner === 'slackers' ? 'slackers' : 'productive', 'Ended from the test tools.', now);
   },
   realWins(game, _p, { on }, now) {
     state(game).realWins = !!on;
@@ -168,6 +170,11 @@ const COMMANDS = {
     const clock = game.dayClock(now);
     if (clock < target) shiftClock(game, now, target - clock);
     game.issueDueTasks(now);
+  },
+  endDay(game, _p, _msg, now) {
+    if (game.phase !== PHASE.PLAYING || !game.day) return 'Start a match first.';
+    shiftClock(game, now, game.day.lengthMs - game.dayClock(now) + 1);
+    game.startEndOfDay(now);
   },
   almostFive(game, _p, _msg, now) {
     if (game.phase !== PHASE.PLAYING || !game.day) return 'Start a match first.';
@@ -194,7 +201,7 @@ const COMMANDS = {
     if (existing) existing.done = false;
     else p.tasks.push({ id: def.id, done: false });
     p.selfDirty = true;
-    return `Added: ${def.label}.`;
+    return `Added: ${taskVersion(def, p.role).label}.`;
   },
   finishTasks(game, p) {
     if (!inMatch(game)) return 'Start a match first.';
@@ -206,25 +213,18 @@ const COMMANDS = {
   // ---- Management tools -----------------------------------------------------
   cooldowns(game, _p, _msg, now) {
     for (const o of game.players.values()) {
-      if (o.isManagement) { o.reportReadyAt = now; o.deskCheckReadyAt = now; }
       o.emergencyCallsLeft = Math.max(1, o.emergencyCallsLeft);
+      o.hrReportUsed = false;
+      o.shenaniganReadyAt = now;
+      o.prankedToday = false;
       o.selfDirty = true;
     }
     game.meetingAvailableAt = now;
     game.freezeUntil = Math.min(game.freezeUntil, now);
-    return 'Cooldowns reset.';
-  },
-  deskCheck(game, _p, _msg, now) {
-    if (game.phase !== PHASE.PLAYING) return 'Stand-ups only happen during the workday.';
-    if (game.deskCheck) return 'A stand-up is already happening.';
-    game.deskCheck = { endsAt: now + game.match.deskCheckWarning * 1000, startedAt: now };
-    const mgmt = [...game.players.values()].find((o) => o.isManagement);
-    if (mgmt) { mgmt.deskCheckReadyAt = Infinity; mgmt.selfDirty = true; }
-    game.broadcast(S2C.EVENT, { kind: 'desk_check', seconds: game.match.deskCheckWarning });
+    return 'Bell, HR complaints and shenanigan cooldowns reset for everyone.';
   },
   meeting(game, p, _msg, now) {
     if (game.phase !== PHASE.PLAYING) return 'Meetings can only be called during the workday.';
-    if (game.deskCheck) game.deskCheck = null;
     game.startMeeting(p, now);
   },
   endMeeting(game, _p, _msg, now) {
@@ -316,32 +316,17 @@ const COMMANDS = {
 // ===========================================================================
 
 function label(role) {
-  return role === ROLE.MANAGEMENT ? 'Management' : role === ROLE.SNITCH ? 'a snitch' : 'a worker';
+  return role === ROLE.SLACKER ? 'a slacker' : 'a productive employee';
 }
 
 /**
- * Give a player a role. There's only ever one Management: whoever had it
- * becomes a worker. `now` null = at match start (use the normal cooldowns),
- * otherwise mid-match (tools are ready immediately).
+ * Give a player a role. Mid-match, hand over the chat history the new role can read.
+ * `now` null = at match start.
  */
 function assignRole(game, p, role, now) {
-  if (role === ROLE.MANAGEMENT) {
-    for (const o of game.players.values()) if (o !== p && o.isManagement) o.role = ROLE.WORKER;
-  }
   p.role = role;
-  if (now != null) {
-    p.reportReadyAt = now;
-    p.deskCheckReadyAt = now;
-  } else if (role === ROLE.MANAGEMENT && !p.reportReadyAt) {
-    p.reportReadyAt = game.day?.startAt ?? 0;
-    p.deskCheckReadyAt = game.day?.startAt ?? 0;
-  }
-  for (const o of game.players.values()) o.selfDirty = true; // team lists changed
-  // Hand over the chat history the new role can now read.
-  if (now != null) {
-    if (p.isTeam) game.send(p.id, S2C.CHAT, { channel: 'team', backlog: game.teamChat });
-    if (!p.isManagement) game.send(p.id, S2C.CHAT, { channel: 'crew', backlog: game.crewChat });
-  }
+  for (const o of game.players.values()) o.selfDirty = true; // slackers' teammate lists changed
+  if (now != null && p.isSlacker) game.send(p.id, S2C.CHAT, { channel: 'team', backlog: game.teamChat });
   game.roomDirty = true;
 }
 
@@ -355,10 +340,16 @@ function shiftClock(game, now, ms) {
 function findSpot(game, p, to) {
   const map = game.office;
   let target = null;
+  let obj = null;
   if (to === 'desk') target = game.roles.seatOf(p);
-  else {
-    const obj = map.getInteractable(to);
-    if (obj) target = { x: obj.x + obj.w / 2, y: obj.y + obj.h + 22 };
+  else if (to === 'other_desk') {
+    // A coworker's desk (for trying the computer prank).
+    const other = [...game.players.values()].find((o) => o !== p && o.isActive && o.deskId);
+    const desk = other && map.desksById.get(other.deskId);
+    if (desk) { obj = map.getInteractable(desk.id); target = desk.seat; }
+  } else {
+    obj = map.getInteractable(to);
+    if (obj) target = { x: obj.x + obj.w / 2, y: obj.y + obj.h / 2 };
     const room = map.rooms.find((r) => r.id === to);
     if (room) target = { x: room.x + room.w / 2, y: room.y + room.h / 2 };
   }
@@ -368,7 +359,8 @@ function findSpot(game, p, to) {
     for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
       const x = target.x + Math.cos(a) * r;
       const y = target.y + Math.sin(a) * r;
-      if (!positionBlocked(map, x, y, 14)) return { x, y };
+      // Somewhere you can stand, and (for objects) can actually use it from.
+      if (!positionBlocked(map, x, y, 14) && (!obj || canReach(map, x, y, obj, INTERACT_RANGE - 6))) return { x, y };
       if (r === 0) break;
     }
   }

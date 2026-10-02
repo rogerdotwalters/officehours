@@ -24,28 +24,24 @@ const dev = (game, p, cmd, args = {}, now = T0) => handleDevCommand(game, p, { c
 test('sandbox: start alone with your chosen role', () => {
   const { game } = makeGame();
   const me = game.join('Tester', null, T0).player;
-  dev(game, me, 'role', { role: ROLE.SNITCH });
+  dev(game, me, 'role', { role: ROLE.SLACKER });
   dev(game, me, 'start');
   assert.equal(game.phase, PHASE.PLAYING);
-  assert.equal(me.role, ROLE.SNITCH);
+  assert.equal(me.role, ROLE.SLACKER);
   assert.equal(game.hostId, me.id);
   game.tick(T0 + START_FREEZE_MS + 10_000);
   assert.equal(game.phase, PHASE.PLAYING, 'no automatic win with one player');
 });
 
-test('sandbox: switch roles live; only one Management at a time', () => {
+test('sandbox: switch roles live', () => {
   const { game, outbox } = makeGame();
   const a = game.join('A', null, T0).player;
-  const b = game.join('B', null, T0).player;
-  dev(game, a, 'role', { role: ROLE.MANAGEMENT });
+  dev(game, a, 'role', { role: ROLE.PRODUCTIVE });
   dev(game, a, 'start');
-  assert.equal(a.role, ROLE.MANAGEMENT);
-  dev(game, b, 'role', { role: ROLE.MANAGEMENT }, T0 + 10);
-  assert.equal(b.role, ROLE.MANAGEMENT);
-  assert.equal(a.role, ROLE.WORKER, 'previous Management demoted');
-  assert.ok(b.reportReadyAt <= T0 + 10, 'tools ready straight away');
-  // B gets the back-office history it can now read.
-  assert.ok(outbox.some((m) => m.to === b.id && m.t === S2C.CHAT && m.d.channel === 'team'));
+  assert.equal(a.role, ROLE.PRODUCTIVE);
+  dev(game, a, 'role', { role: ROLE.SLACKER }, T0 + 10);
+  assert.equal(a.role, ROLE.SLACKER);
+  assert.ok(outbox.some((m) => m.to === a.id && m.t === S2C.CHAT && m.d.channel === 'team'), 'gets the slacker chat');
 });
 
 test('sandbox: invite link joins mid-game; dummies wander and can be cleared', () => {
@@ -68,12 +64,10 @@ test('sandbox: invite link joins mid-game; dummies wander and can be cleared', (
   assert.equal([...game.players.values()].some((p) => p.dummy), false);
 });
 
-test('sandbox: skip to the next task, finish tasks, force a desk check', () => {
+test('sandbox: skip to the next task, finish tasks, teleport, go home and back', () => {
   const { game } = makeGame();
   const me = game.join('Me', null, T0).player;
-  const other = game.join('Other', null, T0).player;
-  dev(game, me, 'role', { role: ROLE.WORKER });
-  dev(game, other, 'role', { role: ROLE.MANAGEMENT });
+  dev(game, me, 'role', { role: ROLE.PRODUCTIVE });
   dev(game, me, 'start');
   const now = T0 + START_FREEZE_MS + 100;
   assert.equal(me.tasks.length, 1);
@@ -83,30 +77,27 @@ test('sandbox: skip to the next task, finish tasks, force a desk check', () => {
   assert.equal(me.tasks.length, game.match.tasks);
   dev(game, me, 'finishTasks', {}, now);
   assert.ok(me.tasks.every((t) => t.done));
-
   dev(game, me, 'teleport', { to: 'break' }, now);
   assert.equal(game.office.roomName(me.x, me.y), 'Break Room');
-  dev(game, me, 'deskCheck', {}, now);
-  assert.ok(game.deskCheck);
-  game.tick(now + game.match.deskCheckWarning * 1000 + 10);
-  assert.equal(me.status, STATUS.SENT_HOME, 'caught away from desk');
-  dev(game, me, 'backToWork', {}, now + 20_000);
+  dev(game, me, 'goHome', {}, now);
+  assert.equal(me.status, STATUS.SENT_HOME);
+  dev(game, me, 'backToWork', {}, now + 1000);
   assert.equal(me.status, STATUS.ACTIVE);
 });
 
 test('sandbox: real win rules are opt-in; end the match on demand', () => {
   const { game } = makeGame();
   const me = game.join('Me', null, T0).player;
-  dev(game, me, 'role', { role: ROLE.MANAGEMENT });
+  dev(game, me, 'role', { role: ROLE.PRODUCTIVE });
   dev(game, me, 'start');
   dev(game, me, 'realWins', { on: true }, T0 + 10);
-  assert.equal(game.phase, PHASE.ENDED, 'no workers left -> Management wins under real rules');
+  assert.equal(game.phase, PHASE.ENDED, 'no slackers at all -> productive win under real rules');
   dev(game, me, 'lobby');
   assert.equal(game.phase, PHASE.LOBBY);
   dev(game, me, 'start');
   dev(game, me, 'realWins', { on: false });
-  dev(game, me, 'end', { winner: 'workers' }, T0 + 20);
-  assert.equal(game.result.winner, 'workers');
+  dev(game, me, 'end', { winner: 'productive' }, T0 + 20);
+  assert.equal(game.result.winner, 'productive');
 });
 
 test('sandbox: dev commands do nothing in normal rooms', async () => {

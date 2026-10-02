@@ -8,9 +8,9 @@
  * the full duration. The client just shows a progress bar; the server owns the
  * timer, so a modified client cannot finish tasks instantly or remotely.
  */
-import { TASKS, TASKS_BY_ID } from '../../shared/tasks.js';
+import { TASKS, TASKS_BY_ID, taskVersion } from '../../shared/tasks.js';
 import { INTERACT_RANGE } from '../../shared/constants.js';
-import { distPointRect } from '../../shared/mapBuilder.js';
+import { canReach } from '../../shared/sight.js';
 import { pickWeighted, randomInt } from './random.js';
 import { MINIGAMES } from '../../shared/minigames/index.js';
 
@@ -59,7 +59,7 @@ export class TaskSystem {
   }
 
   inRange(player, object) {
-    return distPointRect(player.x, player.y, object) <= INTERACT_RANGE;
+    return canReach(this.map, player.x, player.y, object, INTERACT_RANGE);
   }
 
   /**
@@ -71,12 +71,13 @@ export class TaskSystem {
     if (!this.inRange(player, object)) return { ok: false, reason: 'Too far away.' };
 
     const entry = player.tasks.find((t) => !t.done && this.matches(player, TASKS_BY_ID.get(t.id), object));
+    // Same task, but your role decides which version you do.
     if (!entry) {
       if (object.type === 'desk' && object.id !== player.deskId) return { ok: false, reason: "That's not your desk." };
       return { ok: false, reason: 'Nothing on your list here.' };
     }
 
-    const def = TASKS_BY_ID.get(entry.id);
+    const def = taskVersion(TASKS_BY_ID.get(entry.id), player.role);
     if (def.during === 'break') {
       const wait = breakRule(def);
       if (wait) return { ok: false, reason: wait };
@@ -85,7 +86,7 @@ export class TaskSystem {
     // Task window: the server makes the puzzle and keeps the answer.
     if (def.minigame && MINIGAMES[def.minigame]) {
       player.activeTask.minigame = def.minigame;
-      player.activeTask.puzzle = MINIGAMES[def.minigame].generate(rand);
+      player.activeTask.puzzle = MINIGAMES[def.minigame].generate(rand, def.variant);
     }
     player.selfDirty = true;
     return { ok: true, task: def };
@@ -122,22 +123,29 @@ export class TaskSystem {
     if (entry) entry.done = true;
     player.activeTask = null;
     player.selfDirty = true;
-    return TASKS_BY_ID.get(active.taskId);
+    return taskVersion(TASKS_BY_ID.get(active.taskId), player.role);
   }
 
   /**
-   * Check a task-window answer. Returns { ok, task? , reason? }.
-   * The player must still be at the object; any valid solution counts.
+   * Check a task-window answer without finishing anything: { ok, reason? }.
+   * The player must still be at the object; answers that come back impossibly
+   * fast are refused; any valid solution counts.
    */
-  submitMinigame(player, answer, now = Infinity) {
+  checkMinigame(player, answer, now = Infinity) {
     const active = player.activeTask;
     if (!active?.minigame) return { ok: false };
     const game = MINIGAMES[active.minigame];
     if (now - active.startedAt < game.minMs(active.puzzle)) return { ok: false, reason: 'Too quick! Take a second look.' };
     const object = this.map.getInteractable(active.objectId);
     if (!object || !this.inRange(player, object)) { this.cancel(player); return { ok: false, reason: 'You walked away.' }; }
-    if (!MINIGAMES[active.minigame].check(active.puzzle, answer)) return { ok: false, reason: 'Not quite right. Try again.' };
-    return { ok: true, task: this.completeActive(player) };
+    if (!game.check(active.puzzle, answer)) return { ok: false, reason: 'Not quite right. Try again.' };
+    return { ok: true };
+  }
+
+  /** Check and finish in one go (for simple task windows). */
+  submitMinigame(player, answer, now = Infinity) {
+    const res = this.checkMinigame(player, answer, now);
+    return res.ok ? { ok: true, task: this.completeActive(player) } : res;
   }
 
   /** Private, per-player view of the task list. */

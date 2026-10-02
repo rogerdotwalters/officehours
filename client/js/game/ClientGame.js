@@ -18,9 +18,9 @@ import {
   PHASE, STATUS, ROLE, INTERP_DELAY_MS, INTERACT_RANGE, COLORS, OFFICE_OPEN_HOUR, OFFICE_CLOSE_HOUR,
 } from '../../shared/constants.js';
 import { PFLAG } from '../../shared/protocol.js';
-import { TASKS_BY_ID } from '../../shared/tasks.js';
+import { TASKS_BY_ID, taskVersion, SHENANIGAN_BY_TARGET } from '../../shared/tasks.js';
+import { canReach } from '../../shared/sight.js';
 import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
-import { lineOfSight } from '../../shared/sight.js';
 
 const SNAP_DISTANCE = 150;   // further than this from the server = teleport, don't smooth
 const BUFFER_SIZE = 12;
@@ -51,8 +51,6 @@ export class ClientGame {
     this.self = {
       ...self,
       receivedAt: now,
-      reportReadyAt: self.reportReadyIn == null ? null : now + self.reportReadyIn,
-      deskCheckReadyAt: self.deskCheckReadyIn == null ? null : now + self.deskCheckReadyIn,
       meetingReadyAt: now + self.meetingReadyIn,
       freezeUntil: now + self.freezeMs,
     };
@@ -99,17 +97,17 @@ export class ClientGame {
   get me() { return this.roster.get(this.selfId) ?? null; }
   get isHost() { return this.room?.hostId === this.selfId; }
   get role() { return this.self?.role ?? null; }
-  get isManagement() { return this.role === ROLE.MANAGEMENT; }
-  get isSnitch() { return this.role === ROLE.SNITCH; }
-  get isTeam() { return this.isManagement || this.isSnitch; }
+  get isSlacker() { return this.role === ROLE.SLACKER; }
+  /** Your version of a task (productive or slacker). */
+  version(taskId) { return taskVersion(TASKS_BY_ID.get(taskId), this.role); }
   get inOffice() { return !!this.local && !this.inLobby && this.self?.status === STATUS.ACTIVE; }
 
   nameOf(id) { return this.roster.get(id)?.name ?? 'Someone'; }
   colorOf(id) { return COLORS[this.roster.get(id)?.colorId ?? 9].hex; }
 
-  /** Teammate role for a player id, as seen by me (Management/snitches only). */
-  teamRoleOf(id) {
-    return this.self?.team?.find((t) => t.id === id)?.role ?? null;
+  /** Is this player a fellow slacker? (Only slackers are told who the others are.) */
+  isTeammate(id) {
+    return !!this.self?.team?.some((t) => t.id === id);
   }
 
   canMove(now) {
@@ -160,13 +158,6 @@ export class ClientGame {
     const m = totalMin % 60;
     const h12 = ((h24 + 11) % 12) + 1;
     return `${h12}:${String(m).padStart(2, '0')} ${h24 < 12 ? 'AM' : 'PM'}`;
-  }
-
-  /** Desk check countdown in ms, or null. */
-  deskCheckLeft(now) {
-    const dc = this.room?.deskCheck;
-    if (!dc) return null;
-    return Math.max(0, dc.msLeft - (now - this.room.receivedAt));
   }
 
   // ---- Per-frame update ----------------------------------------------------
@@ -223,7 +214,8 @@ export class ClientGame {
   /** Nearest interactable within range, with a label describing what Use will do. */
   nearestUsable() {
     if (!this.local || this.inLobby) return null;
-    const near = this.map.interactablesNear(this.local.x, this.local.y, INTERACT_RANGE);
+    const near = this.map.interactablesNear(this.local.x, this.local.y, INTERACT_RANGE)
+      .filter((o) => canReach(this.map, this.local.x, this.local.y, o, INTERACT_RANGE));
     for (const o of near) {
       const action = this.actionFor(o);
       if (action) return { object: o, action };
@@ -234,16 +226,50 @@ export class ClientGame {
   /** What would interacting with this object do for me? (display only) */
   actionFor(o) {
     if (o.type === 'meeting_bell') return 'Call an all-hands meeting';
-    if (o.type === 'time_clock') return this.isTeam ? null : 'Clock out and go home';
-    if (o.type === 'hr_box') return this.isManagement || this.self?.hrReportUsed ? null : 'File an HR complaint';
+    if (o.type === 'hr_box') return this.self?.hrReportUsed ? null : 'Report a slacker to HR';
+    if (o.type === 'microwave') {
+      const m = this.microwave(o.id);
+      if (m?.state === 'running') return null;
+      if (m?.state === 'done') {
+        if (m.fish) return this.isSlacker ? null : 'Get the fish out (please)';
+        return m.ownerId === this.selfId ? 'Open the microwave' : null;
+      }
+    }
+    if (this.isSlacker) {
+      const s = this.shenaniganAt(o);
+      return s && this.shenaniganReady(performance.now()) && !(s.oncePerDay && this.self?.prankedToday) ? s.label : null;
+    }
     const task = this.pendingTaskFor(o);
     return task ? task.label : null;
+  }
+
+  /** A microwave's state, with its timer counted down locally. */
+  microwave(id) {
+    const m = this.room?.microwaves?.find((x) => x.id === id);
+    if (!m) return null;
+    return { ...m, msLeft: Math.max(0, m.msLeft - (performance.now() - this.room.receivedAt)) };
+  }
+
+  /** Slackers: the shenanigan this object offers (any time, with a cooldown). */
+  shenaniganAt(o) {
+    if (o.type === 'desk') {
+      if (o.id === this.self?.deskId) return SHENANIGAN_BY_TARGET.get('own_desk') ?? null;
+      const owner = [...this.roster.values()].find((p) => p.deskId === o.id && p.status !== 'sent_home' && p.status !== 'left');
+      return owner ? SHENANIGAN_BY_TARGET.get('other_desk') ?? null : null;
+    }
+    return SHENANIGAN_BY_TARGET.get(o.type) ?? null;
+  }
+
+  shenaniganReady(now) {
+    const s = this.self;
+    return !!s && now >= s.receivedAt + (s.shenaniganReadyIn ?? 0);
   }
 
   pendingTaskFor(o) {
     for (const t of this.self?.tasks ?? []) {
       if (t.done) continue;
-      const def = TASKS_BY_ID.get(t.id);
+      if (t.heating) continue;   // lunch is in a microwave already
+      const def = this.version(t.id);
       if (def.target === 'own_desk' ? o.type === 'desk' && o.id === this.self.deskId : def.target === o.type) return def;
     }
     return null;
@@ -258,22 +284,6 @@ export class ClientGame {
   allTasksDone() {
     const s = this.self;
     return !!s && s.tasks.length >= s.totalTasks && s.tasks.every((t) => t.done);
-  }
-
-  /** Management only: players I could report right now. */
-  reportableTargets() {
-    if (!this.isManagement || !this.local || this.phase !== PHASE.PLAYING) return [];
-    const range = this.settings.reportRange;
-    const onBreak = !!this.breakInfo(performance.now()).current;
-    const out = [];
-    for (const [id, e] of this.entities) {
-      if (id === this.selfId || e.flags & PFLAG.AT_DESK) continue;
-      if (onBreak && this.map.inBreakArea(e.x, e.y)) continue; // safe on break
-      const d = Math.hypot(e.x - this.local.x, e.y - this.local.y);
-      const clear = d <= range && lineOfSight(this.map, this.local.x, this.local.y, e.x, e.y);
-      out.push({ id, d, inRange: clear });
-    }
-    return out.sort((a, b) => a.d - b.d);
   }
 
   /** Which player (if any) is under a world-space point. */

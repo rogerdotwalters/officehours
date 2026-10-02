@@ -9,7 +9,7 @@ import { ITEMS, ITEMS_BY_ID, itemsFor } from '../shared/minigames/items.js';
 import { generateFridge, checkFridge, Fridge, CELL } from '../shared/minigames/fridge.js';
 import { MINIGAMES } from '../shared/minigames/index.js';
 import { Game } from '../server/game/Game.js';
-import { PHASE, START_FREEZE_MS } from '../shared/constants.js';
+import { PHASE, START_FREEZE_MS, ROLE } from '../shared/constants.js';
 import { S2C } from '../shared/protocol.js';
 
 test('pixel mask: solid vs transparent cells, round trip, edges', () => {
@@ -78,12 +78,14 @@ test('microwave, cat food, email, recycling: right answers pass, wrong fail', ()
   assert.ok(MINIGAMES.catfood.check(cf, { scoops: cf.scoops }));
   assert.equal(MINIGAMES.catfood.check(cf, { scoops: cf.scoops - 1 }), false);
 
-  const em = MINIGAMES.email.generate(r);
-  const ids = em.emails.map((e) => e.id);
-  assert.ok(ids.length >= 3 && ids.length <= 5);
-  assert.ok(MINIGAMES.email.check(em, { opened: ids, deleted: ids }));
-  assert.equal(MINIGAMES.email.check(em, { opened: ids.slice(1), deleted: ids }), false, 'must open every email');
-  assert.equal(MINIGAMES.email.check(em, { opened: ids, deleted: ids.slice(1) }), false, 'must delete every email');
+  for (const variant of ['productive', 'slacker']) {
+    const em = MINIGAMES.email.generate(r, variant);
+    const ids = em.emails.map((e) => e.id);
+    assert.ok(ids.length >= 3 && ids.length <= 5);
+    assert.ok(MINIGAMES.email.check(em, { opened: ids, handled: ids }));
+    assert.equal(MINIGAMES.email.check(em, { opened: ids.slice(1), handled: ids }), false, 'must open every email');
+    assert.equal(MINIGAMES.email.check(em, { opened: ids, handled: ids.slice(1) }), false, 'must deal with every email');
+  }
 
   const rc = MINIGAMES.recycling.generate(r);
   const keys = rc.items.map((i) => i.key);
@@ -96,6 +98,7 @@ test('task windows on the server: too-quick answers refused, real ones accepted'
   const game = new Game({ code: 'MINI1', sandbox: true, send: (to, t, d) => outbox.push({ to, t, d }), broadcast: () => {} });
   const me = game.join('Me', null, 0).player;
   game.handleStart(me, 0);
+  me.role = ROLE.PRODUCTIVE; // (alone in a test room you'd otherwise be the slacker)
   const now = START_FREEZE_MS + 100;
   me.tasks = [{ id: 'cat', done: false }];
   const bowl = game.office.getInteractable('cat_bowl');
@@ -147,8 +150,15 @@ test('whiteboard: tracing passes, shaky tracing passes, skipping or scribbling f
   assert.equal(scoreDrawing(potato, potato.strokes.slice(0, -1)).ok, false);
 });
 
-test('toilet: drop everything and flush; coffee: exact scoops and brew', () => {
-  const t = MINIGAMES.toilet.generate(Math.random);
+test('toilet and coffee: both versions', () => {
+  const tp = MINIGAMES.toilet.generate(Math.random, 'productive');
+  assert.ok(tp.items.every((i) => i.item === 'tp_roll'));
+  assert.ok(MINIGAMES.toilet.check(tp, { dropped: tp.items.map((i) => i.key), flushed: false }), 'restocking needs no flush');
+  const cs = MINIGAMES.coffee.generate(Math.random, 'slacker');
+  assert.ok(MINIGAMES.coffee.check(cs, { poured: true, returned: true }));
+  assert.equal(MINIGAMES.coffee.check(cs, { poured: true }), false, 'put the empty pot back');
+
+  const t = MINIGAMES.toilet.generate(Math.random, 'slacker');
   const keys = t.items.map((i) => i.key);
   assert.ok(keys.length >= 4);
   assert.ok(t.items.every((i) => ITEMS_BY_ID.get(i.item).uses.includes('toilet')));
@@ -156,8 +166,29 @@ test('toilet: drop everything and flush; coffee: exact scoops and brew', () => {
   assert.equal(MINIGAMES.toilet.check(t, { dropped: keys, flushed: false }), false, 'must flush');
   assert.equal(MINIGAMES.toilet.check(t, { dropped: keys.slice(1), flushed: true }), false, 'everything goes in');
 
-  const c = MINIGAMES.coffee.generate(Math.random);
+  const c = MINIGAMES.coffee.generate(Math.random, 'productive');
   assert.ok(MINIGAMES.coffee.check(c, { scoops: c.scoops, brewed: true }));
   assert.equal(MINIGAMES.coffee.check(c, { scoops: c.scoops - 1, brewed: true }), false);
   assert.equal(MINIGAMES.coffee.check(c, { scoops: c.scoops, brewed: false }), false);
+});
+
+test('fridge heist (slacker): eat the named coworker\u2019s lunch', () => {
+  for (let i = 0; i < 20; i++) {
+    const p = MINIGAMES.fridge.generate(Math.random, 'slacker');
+    assert.equal(p.variant, 'slacker');
+    assert.equal(p.pieces.filter((q) => q.owner === p.target.owner).length, 1, 'owner name is unique');
+    assert.ok(MINIGAMES.fridge.check(p, { ate: p.target.key }));
+    const other = p.pieces.find((q) => q.key !== p.target.key);
+    assert.equal(MINIGAMES.fridge.check(p, { ate: other.key }), false);
+  }
+});
+
+test('whiteboard: productive charts and slacker doodles are different sets', async () => {
+  const { DRAWINGS } = await import('../shared/minigames/whiteboard.js');
+  for (let i = 0; i < 30; i++) {
+    const p = MINIGAMES.whiteboard.generate(Math.random, 'productive');
+    const s = MINIGAMES.whiteboard.generate(Math.random, 'slacker');
+    assert.equal(DRAWINGS.find((d) => d.id === p.drawing).variant, 'productive');
+    assert.equal(DRAWINGS.find((d) => d.id === s.drawing).variant, 'slacker');
+  }
 });

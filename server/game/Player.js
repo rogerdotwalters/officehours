@@ -21,7 +21,7 @@ export class Player {
   }
 
   resetForMatch() {
-    this.role = ROLE.WORKER;
+    this.role = ROLE.PRODUCTIVE;
     this.status = STATUS.ACTIVE;
     this.deskId = null;
     this.x = 0;
@@ -30,24 +30,17 @@ export class Player {
     this.tasks = [];              // [{ id, done }]  grows during the day
     this.taskHistory = new Set(); // task ids handed out this match (no repeats)
     this.activeTask = null;       // { taskId, objectId, startedAt, duration }
-    this.reportReadyAt = 0;
-    this.deskCheckReadyAt = 0;
+    this.lastDrawing = null;      // whiteboard drawing id from your last whiteboard task
+    this.shenaniganReadyAt = 0;   // slackers: next shenanigan allowed at
+    this.prankedToday = false;    // slackers: one computer prank per day
     this.hrReportUsed = false;
     this.emergencyCallsLeft = 0;
     this.selfDirty = true;        // private state changed -> resend SELF
   }
 
-  get isManagement() {
-    return this.role === ROLE.MANAGEMENT;
-  }
-
-  get isSnitch() {
-    return this.role === ROLE.SNITCH;
-  }
-
-  /** Management's side: Management plus snitches. */
-  get isTeam() {
-    return this.role === ROLE.MANAGEMENT || this.role === ROLE.SNITCH;
+  /** Secretly non-productive: does the shenanigan version of every task. */
+  get isSlacker() {
+    return this.role === ROLE.SLACKER;
   }
 
   get isActive() {

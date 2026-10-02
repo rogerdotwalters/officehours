@@ -62,7 +62,7 @@ export function mountMicrowave(root, puzzle, { submit }) {
     if (!sent) {
       status.textContent = !inside
         ? 'Drag the food into the microwave.'
-        : 'Now type the time from the sticky note and press Start.';
+        : 'Now type the time from the sticky note and press Start. Then wait for the ding.';
     }
   }
   render();

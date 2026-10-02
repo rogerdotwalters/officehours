@@ -81,13 +81,11 @@
           <div id="settings-form" class="settings"></div>
           <details class="howto">
             <summary>How the day works</summary>
-            <p>One of you is secretly <strong>Management</strong>, maybe helped by a few secret <strong>snitches</strong>. Everyone else is a worker.</p>
-            <p>Tasks arrive one at a time as the workday goes on. Finish them all, then clock out at the time clock in the Lobby. If enough workers clock out before five o'clock, workers win.</p>
-            <p>Management fires people by catching them away from their desks, or by calling a stand-up meeting: when the countdown ends, anyone not at their own desk is fired.</p>
-            <p>Suspect a snitch? File a complaint in the HR box in the Lobby. Right, and the snitch is fired. Wrong, and HR fires you instead. One complaint per person.</p>
-            <p>During the day, workers can talk in the <strong>water cooler</strong> chat and Management in the <strong>back office</strong>. Snitches work like everyone else but sit in both chats, passing on what they hear, and win with Management.</p>
-            <p>The day has breaks. On a break nobody can be fired in the Break Room or anywhere outside, there are no stand-ups, and lunch tasks can finally be done.</p>
-            <p>Anyone can ring the bell in the Conference Room once to call an all-hands meeting and vote someone out.</p>
+            <p>Most of you are <strong>productive employees</strong>. A secret few are <strong>slackers</strong>.</p>
+            <p>Everyone gets the same tasks, one at a time through the day, but each role does its own version. Productive employees heat their lunch, chart the quarterly results on the whiteboard and restock the toilet paper. Slackers microwave fish for 15 minutes, doodle BOSS SUCKS and clog the toilet.</p>
+            <p>Productive work fills the <strong>Productivity</strong> meter; shenanigans fill the <strong>Chaos</strong> meter. Shenanigans leave messes behind, like fish fumes, rude doodles and floods, and a productive employee doing their task at the same spot cleans the mess up.</p>
+            <p>Catch the slackers: ring the bell in the Conference Room for an all-hands meeting and vote them out, or report them at the HR box in the Lobby (if you're wrong, you're fired). Walls block your view, so watch the doorways.</p>
+            <p>Productive employees win when Productivity hits 100% or every slacker is fired. Slackers win when Chaos hits 100% or there are as many slackers as productive employees. At 5 PM, the higher meter wins.</p>
           </details>
         </section>
 
@@ -104,7 +102,7 @@
     <!-- ---------- In-game HUD ---------- -->
     <div id="hud" class="hud" hidden>
       <details id="hud-tasks" class="sticky-note" open>
-        <summary>To do <span id="hud-task-count"></span></summary>
+        <summary><span id="hud-task-title">To do</span> <span id="hud-task-count"></span></summary>
         <ul id="hud-task-list"></ul>
         <p id="hud-next" class="sticky-note__next"></p>
       </details>
@@ -120,19 +118,17 @@
         </div>
         <div class="hud-top__pills">
           <div id="hud-room" class="hud-pill">Hallway</div>
-          <div id="hud-progress" class="hud-pill hud-pill--quiet"></div>
+          <div id="hud-meters" class="meters" hidden>
+            <span class="meter meter--prod" title="Productive tasks done today"><b>Productivity</b><i><span class="meter__fill"></span><span class="meter__target"></span></i><span class="meter__pct"></span></span>
+            <span class="meter meter--chaos" title="Slacker shenanigans done"><b>Chaos</b><i><span class="meter__fill"></span></i><span class="meter__pct"></span></span>
+            <span class="meter__score"></span>
+          </div>
         </div>
       </div>
 
       <div class="hud-corner">
         <div id="hud-role" class="role-tag"></div>
         <canvas id="hud-minimap" class="minimap" aria-hidden="true"></canvas>
-      </div>
-
-      <div id="hud-deskcheck" class="deskcheck" role="alert" hidden>
-        <span class="deskcheck__title">Stand-up meeting</span>
-        <span class="deskcheck__body"></span>
-        <span class="deskcheck__count"></span>
       </div>
 
       <div id="hud-break" class="deskcheck deskcheck--break" role="status" hidden>
@@ -153,9 +149,7 @@
       <!-- Actions: bottom-right thumb zone on phones, bottom-right corner on desktop -->
       <div class="actions">
         <button id="act-crew" class="act act--crew" hidden><span class="act__label">Water cooler <kbd>T</kbd></span><span id="crew-unread" class="count" hidden></span></button>
-        <button id="act-team" class="act act--team" hidden><span class="act__label">Back office <kbd>B</kbd></span><span id="team-unread" class="count" hidden></span></button>
-        <button id="act-deskcheck" class="act act--deskcheck" hidden><span class="act__label">Stand-up <kbd>F</kbd></span><span class="act__sub"></span></button>
-        <button id="act-report" class="act act--report" hidden><span class="act__label">Fire <kbd>R</kbd></span><span class="act__sub"></span></button>
+        <button id="act-team" class="act act--team" hidden><span class="act__label">Slacker chat <kbd>B</kbd></span><span id="team-unread" class="count" hidden></span></button>
         <button id="act-use" class="act act--use" hidden>Use</button>
       </div>
 
@@ -163,9 +157,9 @@
       <section id="crew-chat" class="backoffice backoffice--crew" aria-labelledby="crew-title" hidden>
         <header class="backoffice__head">
           <h3 id="crew-title">Water cooler</h3>
-          <p class="backoffice__sub">Workers only. Management can't see this, but snitches can.</p>
+          <p class="backoffice__sub">Everyone can read this, including the slackers.</p>
           <div class="backoffice__btns">
-            <button class="btn btn--small btn--ghost" data-switch-chat="team" hidden>Back office</button>
+            <button class="btn btn--small btn--ghost" data-switch-chat="team" hidden>Slacker chat</button>
             <button class="btn btn--small btn--ghost" data-close-chat aria-label="Close water cooler">Close</button>
           </div>
         </header>
@@ -178,8 +172,8 @@
 
       <section id="team-chat" class="backoffice" aria-labelledby="team-title" hidden>
         <header class="backoffice__head">
-          <h3 id="team-title">Back office</h3>
-          <p class="backoffice__sub">Only Management and snitches can see this.</p>
+          <h3 id="team-title">Slacker group chat</h3>
+          <p class="backoffice__sub">Only slackers can see this.</p>
           <div class="backoffice__btns">
             <button class="btn btn--small btn--ghost" data-switch-chat="crew" hidden>Water cooler</button>
             <button class="btn btn--small btn--ghost" data-close-chat aria-label="Close back office">Close</button>
@@ -224,6 +218,7 @@
       </header>
       <div class="meeting__body">
         <div>
+          <div id="meeting-report" class="eod-report" hidden></div>
           <ul id="meeting-cards" class="vote-cards"></ul>
           <button id="meeting-skip" class="btn btn--quiet">Skip vote</button>
           <p id="meeting-result" class="meeting__result" hidden></p>
@@ -231,7 +226,7 @@
         <section class="chat chat--meeting" aria-label="Meeting chat">
           <ol class="chat__log" data-chat-log="all"></ol>
           <form class="chat__form" data-chat-form="all">
-            <input maxlength="140" placeholder="Who was away from their desk?" aria-label="Chat message" enterkeyhint="send" />
+            <input maxlength="140" placeholder="Who smells like fish?" aria-label="Chat message" enterkeyhint="send" />
             <button class="btn btn--small">Send</button>
           </form>
         </section>
@@ -259,7 +254,7 @@
       <header class="hrform__head">
         <p class="hrform__dept">Human Resources</p>
         <h2 id="hr-title">Anonymous complaint form</h2>
-        <p class="hrform__warn">I believe the following coworker is a <b>snitch</b>. I understand that if I'm wrong, <b>I will be fired</b>.</p>
+        <p class="hrform__warn">I believe the following coworker is a <b>slacker</b>. I understand that if I'm wrong, <b>I will be fired</b>.</p>
       </header>
       <ul id="hr-list" class="hrform__list"></ul>
       <div class="hrform__actions">

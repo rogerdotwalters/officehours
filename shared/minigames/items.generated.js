@@ -899,5 +899,29 @@ export const ITEMS = [
    "3ff8",
    "1ff0"
   ]
+ },
+ {
+  "id": "fish",
+  "name": "fish",
+  "file": "fish.png",
+  "w": 80,
+  "h": 40,
+  "cols": 20,
+  "rows": 10,
+  "uses": [
+   "stinky"
+  ],
+  "mask": [
+   "1fff0",
+   "1fff0",
+   "87fe0",
+   "5fff0",
+   "7fff0",
+   "7fff0",
+   "5fff0",
+   "87fe0",
+   "01f00",
+   "00000"
+  ]
  }
 ];

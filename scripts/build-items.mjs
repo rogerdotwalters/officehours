@@ -20,7 +20,7 @@ import { CELL, buildMask, encodeMask, solidCells } from '../shared/minigames/pix
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = join(root, 'client/assets/items');
-const KNOWN_USES = new Set(['fridge', 'yours', 'microwave', 'recycle', 'toilet']);
+const KNOWN_USES = new Set(['fridge', 'yours', 'microwave', 'recycle', 'toilet', 'stinky']);
 
 function parseCsv(text) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));

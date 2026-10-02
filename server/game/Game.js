@@ -10,14 +10,24 @@
  * The lobby is a small walkable waiting room (shared/lobbyMap.js); the match
  * happens in the office (shared/officeMap.js).
  *
- * The workday: `match.workdayMinutes` long, split into `match.tasks` equal
- * sections. At the start of each section every player still in the office is
- * handed one more task. The clock pauses during all-hands meetings. Workers can
- * clock out once their last task (handed out in the final section) is done.
+ * Roles: most players are PRODUCTIVE employees; a secret few are SLACKERS.
+ * Everyone gets the same tasks, but each role does its own version of them
+ * (shared/tasks.js). Productive tasks fill the Productivity meter; slacker
+ * tasks fill the Chaos meter and can leave evidence around the office
+ * (shared/evidence.js) that productive employees can clean up.
+ *
+ * The week: `match.days` workdays. Each is `match.workdayMinutes` long, split
+ * into `match.tasks` equal sections; at the start of each section every
+ * productive employee in the office is handed one more task. Slackers get no
+ * list: they can cause any shenanigan, any time (with a cooldown).
+ *
+ * At 5 PM: the end-of-day report. Today's score is productivity minus chaos.
+ * Anyone whose computer was pranked is fired by IT. If the score missed the
+ * target, management makes the team fire someone by vote. Then the next day.
  */
 import {
   PHASE, STATUS, ROLE, MAX_PLAYERS, MIN_PLAYERS, NAME_MAX, CHAT_MAX, CHAT_HISTORY,
-  START_FREEZE_MS, MEETING_COOLDOWN_MS, EMERGENCY_CALLS_PER_PLAYER, GO_HOME_RATIO,
+  START_FREEZE_MS, MEETING_COOLDOWN_MS, EMERGENCY_CALLS_PER_PLAYER,
   RECONNECT_GRACE_MS, TICK_MS, INTERACT_RANGE, COLORS,
 } from '../../shared/constants.js';
 import { S2C, PFLAG } from '../../shared/protocol.js';
@@ -25,18 +35,39 @@ import { buildOfficeMap, distPointRect } from '../../shared/mapBuilder.js';
 import { LOBBY_ROOM } from '../../shared/lobbyMap.js';
 import { DEFAULT_SETTINGS, sanitizeSettings } from '../../shared/settings.js';
 import { breakWindows, breakAt, nextBreak } from '../../shared/breaks.js';
-import { canSee } from '../../shared/sight.js';
+import { canSee, canReach, lineOfSight } from '../../shared/sight.js';
+import { inkToStrokes } from '../../shared/minigames/whiteboard.js';
 import { stepMovement } from '../../shared/physics.js';
 import { Player } from './Player.js';
 import { TaskSystem } from './TaskSystem.js';
 import { RoleSystem } from './RoleSystem.js';
 import { MeetingSystem, SKIP } from './MeetingSystem.js';
-import { randomId } from './random.js';
+import { randomId, randomInt } from './random.js';
+
+const rand = () => randomInt(2 ** 30) / 2 ** 30;
 import { EMOTES_BY_ID } from '../../shared/emotes.js';
+import { EVIDENCE, CHAOS } from '../../shared/evidence.js';
+import { TASKS_BY_ID, SHENANIGAN_BY_TARGET, taskVersion } from '../../shared/tasks.js';
+import { MINIGAMES } from '../../shared/minigames/index.js';
+import { runMs } from '../../shared/minigames/microwave.js';
+import { PRANK_CONTENT } from '../../shared/minigames/prank.js';
 import * as Sandbox from '../dev/Sandbox.js'; // SANDBOX
 
 const LOBBY_GRACE_MS = 10_000;
 const POST_MEETING_FREEZE_MS = 1500;
+
+/** Whiteboard ink from a client: tidy numbers, at most a few thousand points. */
+function cleanInk(ink) {
+  let budget = 2500;
+  return inkToStrokes(ink).map((s) => {
+    const out = [];
+    for (const [x, y] of s) {
+      if (budget-- <= 0) break;
+      out.push(Math.round(Math.max(0, Math.min(160, x)) * 2) / 2, Math.round(Math.max(0, Math.min(100, y)) * 2) / 2);
+    }
+    return out;
+  }).filter((s) => s.length);
+}
 
 // Strip control characters and angle brackets, collapse whitespace.
 function cleanText(value, max) {
@@ -63,10 +94,19 @@ export class Game {
     this.settings = { ...DEFAULT_SETTINGS }; // edited in the lobby
     this.match = null;                       // frozen copy of settings for the current match
     this.chat = [];                          // public chat
-    this.teamChat = [];                      // back office: Management + snitches
-    this.crewChat = [];                      // water cooler: workers + snitches
+    this.teamChat = [];                      // slackers' group chat
+    this.crewChat = [];                      // water cooler: everyone, during the day
     this.day = null;                         // workday clock, see dayClock()
-    this.deskCheck = null;                   // { endsAt } while a desk check counts down
+    this.evidence = new Map();               // objectId -> { kind, objectId, at, until, data }
+    this.announcements = [];                 // { at, event } evidence news, sent after a delay
+    this.whiteboard = null;                  // { drawing } the last productive drawing, if any
+    this.board = null;                       // { ink, drawing } what's on the whiteboard now
+    this.liveBoard = null;                   // { playerId, ink } someone drawing right now
+    this.dayNumber = 0;                      // 1..match.days
+    this.chaosToday = 0;                     // chaos % from today's shenanigans
+    this.microwaves = new Map();             // id -> { state: 'running'|'done', ownerId, endsAt, fish, food }
+    this.spiked = new Set();                 // water coolers with laxatives in the tank (secret)
+    this.pranked = new Map();                // deskId -> { victimId, content, by }  (IT finds these at 5 PM)
     this.breaks = [];                        // break windows for this match (shared/breaks.js)
     this.breakId = null;                     // the break happening right now, if any
     this.freezeUntil = 0;
@@ -180,12 +220,13 @@ export class Game {
     this.send(p.id, S2C.ROOM, this.roomState());
     this.send(p.id, S2C.CHAT, { channel: 'all', backlog: this.chat });
     if (this.phase !== PHASE.LOBBY) {
-      if (p.isTeam) this.send(p.id, S2C.CHAT, { channel: 'team', backlog: this.teamChat });
-      if (!p.isManagement) this.send(p.id, S2C.CHAT, { channel: 'crew', backlog: this.crewChat });
+      if (p.isSlacker) this.send(p.id, S2C.CHAT, { channel: 'team', backlog: this.teamChat });
+      this.send(p.id, S2C.CHAT, { channel: 'crew', backlog: this.crewChat });
     }
     if (this.phase !== PHASE.LOBBY) this.send(p.id, S2C.SELF, this.selfState(p, now));
     this.send(p.id, S2C.SNAPSHOT, this.snapshotFor(p, this.positions()));
     if (this.meetings.active) this.send(p.id, S2C.MEETING, this.meetings.serialize(now));
+    if (this.phase !== PHASE.LOBBY) this.send(p.id, S2C.BOARD, { final: this.board });
     if (this.phase === PHASE.ENDED && this.result) this.send(p.id, S2C.GAME_OVER, this.result);
   }
 
@@ -222,34 +263,18 @@ export class Game {
 
     this.match = { ...this.settings };
     this.phase = PHASE.PLAYING;
-    this.freezeUntil = now + START_FREEZE_MS;
-    this.day = {
-      startAt: this.freezeUntil,
-      lengthMs: this.match.workdayMinutes * 60_000,
-      sections: this.match.tasks,
-      pausedTotal: 0,
-      pausedAt: null,
-    };
-    this.meetingAvailableAt = this.freezeUntil + MEETING_COOLDOWN_MS;
-    this.deskCheck = null;
-    this.breaks = breakWindows(this.match.breaks, this.day.lengthMs);
-    this.breakId = null;
+    this.whiteboard = null;
+    this.board = null;
     this.result = null;
     this.chat = [];
     this.teamChat = [];
     this.crewChat = [];
 
     for (const player of everyone) player.resetForMatch();
-    this.roles.assign(everyone, this.match, this.day.startAt);
+    this.roles.assign(everyone, this.match);
     if (this.sandbox) Sandbox.applyPreferredRoles(this); // SANDBOX: chosen roles
-    for (const player of everyone) {
-      this.tasks.reset(player);
-      this.tasks.issueNext(player); // first task of the day, shown during the role reveal
-      const seat = this.roles.seatOf(player);
-      player.x = seat.x;
-      player.y = seat.y;
-      player.emergencyCallsLeft = EMERGENCY_CALLS_PER_PLAYER;
-    }
+    this.dayNumber = 0;
+    this.beginDay(now, START_FREEZE_MS);
 
     this.broadcast(S2C.GAME_START, { freezeMs: START_FREEZE_MS });
     this.broadcast(S2C.CHAT, { channel: 'all', backlog: [] });
@@ -275,7 +300,11 @@ export class Game {
     this.phase = PHASE.LOBBY;
     this.match = null;
     this.day = null;
-    this.deskCheck = null;
+    this.evidence = new Map();
+    this.announcements = [];
+    this.whiteboard = null;
+    this.board = null;
+    this.liveBoard = null;
     this.result = null;
     this.chat = [];
     this.teamChat = [];
@@ -285,6 +314,96 @@ export class Game {
     this.broadcastRoom();
     this.broadcast(S2C.CHAT, { channel: 'all', backlog: [] });
     this.sendSnapshots();
+  }
+
+  // ===========================================================================
+  // Days
+  // ===========================================================================
+
+  /**
+   * Start the next workday: a fresh clock and fresh tasks, messes cleaned up
+   * overnight, sick people back, everyone at their desk.
+   */
+  beginDay(now, freezeMs) {
+    this.dayNumber++;
+    this.freezeUntil = now + freezeMs;
+    this.day = {
+      startAt: this.freezeUntil,
+      lengthMs: this.match.workdayMinutes * 60_000,
+      sections: this.match.tasks,
+      pausedTotal: 0,
+      pausedAt: null,
+    };
+    this.breaks = breakWindows(this.match.breaks, this.day.lengthMs);
+    this.breakId = null;
+    this.meetingAvailableAt = this.freezeUntil + MEETING_COOLDOWN_MS;
+    this.evidence = new Map();
+    this.announcements = [];
+    this.liveBoard = null;
+    this.chaosToday = 0;
+    this.microwaves = new Map();
+    this.spiked = new Set();
+    this.pranked = new Map();
+    for (const p of this.players.values()) {
+      if (p.status === STATUS.SICK) p.status = STATUS.ACTIVE;   // feeling better
+      this.tasks.reset(p);
+      if (p.isActive && !p.isSlacker) this.tasks.issueNext(p); // first task of the day
+      p.shenaniganReadyAt = this.freezeUntil;
+      p.prankedToday = false;
+      p.emergencyCallsLeft = EMERGENCY_CALLS_PER_PLAYER;
+      p.input = { dx: 0, dy: 0 };
+      const seat = this.roles.seatOf(p);
+      if (seat) { p.x = seat.x; p.y = seat.y; }
+      p.selfDirty = true;
+    }
+    this.roomDirty = true;
+  }
+
+  /** 5 PM: the end-of-day report (a meeting of its own). */
+  startEndOfDay(now) {
+    this.now = now;
+    this.phase = PHASE.MEETING;
+    this.chat = [];
+    this.pauseDay(now);
+    this.liveBoard = null;
+    for (const p of this.players.values()) this.tasks.cancel(p);
+
+    const meters = this.meters();
+    const messes = [...this.evidence.values()].filter((e) => e.kind !== 'screen').length;
+    const chaos = Math.min(100, this.chaosToday + messes * CHAOS.PER_MESS_LEFT);
+    const productivity = Math.round(meters.productivity * 100);
+    const score = Math.max(0, productivity - Math.round(chaos));
+
+    // IT sweeps the computers: anything on a screen gets its owner fired.
+    const itFired = [];
+    for (const { victimId, content } of this.pranked.values()) {
+      const v = this.players.get(victimId);
+      if (!v || v.status === STATUS.SENT_HOME || v.status === STATUS.LEFT) continue;
+      this.sendHome(v);
+      itFired.push({ id: v.id, name: v.name, content, role: v.role });
+    }
+
+    const active = [...this.players.values()].filter((o) => o.isActive);
+    active.forEach((o, i) => {
+      o.input = { dx: 0, dy: 0 };
+      const seat = this.office.meetingSeats[i % this.office.meetingSeats.length];
+      o.x = seat.x;
+      o.y = seat.y;
+    });
+    const report = {
+      day: this.dayNumber, days: this.match.days, productivity, chaos: Math.round(chaos),
+      messes, score, target: this.match.target, itFired,
+    };
+    const voteNeeded = score < this.match.target && active.length > 1;
+    this.meetings.start({
+      kind: 'eod', calledBy: null, now, report, voteNeeded,
+      voterIds: active.filter((o) => o.connected && !o.dummy).map((o) => o.id),
+    });
+    this.broadcast(S2C.EVENT, { kind: 'end_of_day', day: this.dayNumber });
+    this.broadcast(S2C.CHAT, { channel: 'all', backlog: [] });
+    this.broadcastRoom();
+    this.sendSnapshots();
+    this.broadcast(S2C.MEETING, this.meetings.serialize(now));
   }
 
   // ===========================================================================
@@ -349,7 +468,7 @@ export class Game {
   issueDueTasks(now) {
     const due = this.tasksDue(now);
     for (const p of this.players.values()) {
-      if (!p.isActive) continue;
+      if (!p.isActive || p.isSlacker) continue;   // slackers don't get a list
       while (p.tasks.length < due) {
         const def = this.tasks.issueNext(p);
         if (!def) break;
@@ -378,14 +497,15 @@ export class Game {
     if (!this.canAct(p, now)) return;
     const object = typeof objectId === 'string' ? this.office.getInteractable(objectId) : null;
     if (!object) return;
-    if (distPointRect(p.x, p.y, object) > INTERACT_RANGE) return this.toast(p, 'Too far away.');
+    if (!canReach(this.office, p.x, p.y, object, INTERACT_RANGE)) return this.toast(p, 'You can\u2019t reach that from here.');
     if (p.activeTask?.objectId === object.id) return; // already working here
 
     switch (object.type) {
       case 'meeting_bell': return this.callMeeting(p, now);
-      case 'time_clock':   return this.clockOut(p, now);
       case 'hr_box':       return this.handleInteractHrBox(p);
+      case 'microwave':    return this.useMicrowave(p, object, now);
       default: {
+        if (p.isSlacker) return this.startShenanigan(p, object, now);
         this.tasks.cancel(p);
         const res = this.tasks.start(p, object, now, () => this.breakTaskBlocker(now));
         if (!res.ok) this.toast(p, res.reason);
@@ -400,62 +520,221 @@ export class Game {
   /** The player solved (or tried to solve) their task window. */
   handleMinigame(p, answer, now) {
     if (!this.canAct(p, now) || !p.activeTask?.minigame) return;
-    const res = this.tasks.submitMinigame(p, answer, now);
-    if (!res.ok) return res.reason && this.toast(p, res.reason);
-    this.onTaskFinished(p, res.task);
+    const a = p.activeTask;
+    const objectId = a.objectId;
+    const check = this.tasks.checkMinigame(p, answer, now);
+    if (!check.ok) return check.reason && this.toast(p, check.reason);
+
+    if (a.shenanigan) return this.finishShenanigan(p, a, answer, now);
+
+    // Microwave: starting it isn't the end. Wait for the ding, then open it.
+    if (a.minigame === 'microwave') {
+      const m = this.office.getInteractable(objectId);
+      this.microwaves.set(objectId, { state: 'running', ownerId: p.id, endsAt: now + runMs(a.puzzle), fish: false, food: a.puzzle.food });
+      const entry = p.tasks.find((t) => t.id === a.taskId && !t.done);
+      if (entry) entry.heating = objectId;
+      p.activeTask = null;
+      p.selfDirty = true;
+      this.roomDirty = true;
+      return this.toast(p, `Heating. Come back to the ${m?.label?.toLowerCase() ?? 'microwave'} when it dings.`);
+    }
+
+    const drawing = a.minigame === 'whiteboard' ? a.puzzle.drawing : null;
+    const done = this.tasks.completeActive(p);
+    if (drawing) {
+      p.lastDrawing = drawing;
+      // A productive drawing replaces whatever was up there.
+      this.whiteboard = { drawing };
+      // Whatever they actually drew stays on the board, for everyone to see.
+      this.board = { ink: cleanInk(answer?.ink), drawing };
+      this.liveBoard = null;
+      this.broadcast(S2C.BOARD, { final: this.board, live: null });
+    }
+    this.onTaskFinished(p, done, objectId, now);
+    // A drink from a spiked cooler: you won't make it to 5 PM.
+    if (a.minigame === 'cooler' && this.spiked.has(objectId)) {
+      this.spiked.delete(objectId);
+      this.makeSick(p);
+    }
   }
 
-  onTaskFinished(p, finished) {
-    const total = this.match.tasks;
-    const allIn = p.tasks.length >= total;
+  makeSick(p) {
+    this.tasks.cancel(p);
+    p.status = STATUS.SICK;
+    p.input = { dx: 0, dy: 0 };
+    p.selfDirty = true;
+    this.roomDirty = true;
+    this.broadcast(S2C.EVENT, { kind: 'sick', playerId: p.id, name: p.name });
+    this.checkWin(this.now);
+  }
+
+  // ===========================================================================
+  // Microwaves. They really run; everyone sees the timer.
+  // ===========================================================================
+
+  useMicrowave(p, object, now) {
+    const m = this.microwaves.get(object.id);
+    if (m?.state === 'running') {
+      if (m.ownerId === p.id && !m.fish) return this.toast(p, `Still heating: ${Math.ceil((m.endsAt - now) / 1000)}s to go.`);
+      return this.toast(p, m.fish ? 'Something fishy is in there. Running.' : 'Someone\u2019s using this one. Try the other microwave.');
+    }
+    if (m?.state === 'done') {
+      if (m.fish) {
+        if (p.isSlacker) return this.toast(p, 'Leave it. Let it stink.');
+        // Productive: get the fish out. Fumes gone.
+        this.microwaves.delete(object.id);
+        this.evidence.delete(object.id);
+        this.roomDirty = true;
+        this.broadcast(S2C.EVENT, { kind: 'cleaned', where: this.office.roomName(object.x, object.y), objectId: object.id });
+        return this.toast(p, 'You took the fish out. The whole floor thanks you.');
+      }
+      if (m.ownerId !== p.id) return this.toast(p, 'Someone else\u2019s lunch is in there.');
+      // Your lunch: open it to finish the task.
+      this.microwaves.delete(object.id);
+      this.roomDirty = true;
+      const entry = p.tasks.find((t) => t.heating === object.id && !t.done);
+      if (!entry) return this.toast(p, 'Lunch is served.');
+      entry.done = true;
+      p.selfDirty = true;
+      return this.onTaskFinished(p, taskVersion(TASKS_BY_ID.get(entry.id), p.role), object.id, now);
+    }
+    // Free microwave.
+    if (p.isSlacker) return this.startShenanigan(p, object, now);
+    const waiting = p.tasks.find((t) => t.heating && !t.done);
+    if (waiting) return this.toast(p, 'Your lunch is already in the other microwave.');
+    this.tasks.cancel(p);
+    const res = this.tasks.start(p, object, now, () => this.breakTaskBlocker(now));
+    if (!res.ok) this.toast(p, res.reason);
+  }
+
+  updateMicrowaves(now) {
+    for (const [id, m] of this.microwaves) {
+      if (m.state !== 'running' || now < m.endsAt) continue;
+      m.state = 'done';
+      this.roomDirty = true;
+      const object = this.office.getInteractable(id);
+      if (m.fish) {
+        const slacker = this.players.get(m.ownerId);
+        if (slacker && object) this.leaveEvidence('fish', slacker, object, now);
+      } else {
+        this.send(m.ownerId, S2C.TOAST, { text: 'Ding! Your lunch is ready. Go open the microwave.' });
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Shenanigans: slackers don't get tasks; they cause chaos whenever they like.
+  // ===========================================================================
+
+  /** Which shenanigan this object offers this player, or null. */
+  shenaniganFor(p, object) {
+    if (object.type === 'desk') {
+      if (object.id === p.deskId) return SHENANIGAN_BY_TARGET.get('own_desk') ?? null;
+      const owner = [...this.players.values()].find((o) => o.deskId === object.id && o.status !== STATUS.SENT_HOME && o.status !== STATUS.LEFT);
+      return owner ? SHENANIGAN_BY_TARGET.get('other_desk') ?? null : null;
+    }
+    return SHENANIGAN_BY_TARGET.get(object.type) ?? null;
+  }
+
+  startShenanigan(p, object, now) {
+    const s = this.shenaniganFor(p, object);
+    if (!s) return this.toast(p, 'Nothing fun to do here.');
+    if (now < (p.shenaniganReadyAt ?? 0)) {
+      return this.toast(p, `Lie low for ${Math.ceil((p.shenaniganReadyAt - now) / 1000)}s before the next one.`);
+    }
+    if (s.oncePerDay && p.prankedToday) return this.toast(p, 'One computer per day. Don\u2019t push your luck.');
+    if (s.effect === 'sick' && this.spiked.has(object.id)) return this.toast(p, 'This one\u2019s already been taken care of.');
+    if (s.effect === 'prank' && this.pranked.has(object.id)) return this.toast(p, 'Someone already got to this computer.');
+    if (this.evidence.has(object.id) && s.evidence !== 'chain_email') return this.toast(p, 'There\u2019s already a mess here.');
+    this.tasks.cancel(p);
+    p.activeTask = { taskId: s.id, objectId: object.id, startedAt: now, duration: s.duration, shenanigan: true };
+    if (s.minigame) {
+      p.activeTask.minigame = s.minigame;
+      p.activeTask.puzzle = MINIGAMES[s.minigame].generate(rand, 'slacker');
+      if (s.effect === 'prank') {
+        const owner = [...this.players.values()].find((o) => o.deskId === object.id);
+        p.activeTask.puzzle.owner = owner?.name ?? 'Someone';
+      }
+    }
+    p.selfDirty = true;
+  }
+
+  /** A shenanigan is done: chaos, a mess, maybe worse. */
+  finishShenanigan(p, a, answer, now) {
+    const s = taskVersion(TASKS_BY_ID.get(a.taskId), 'slacker');
+    const object = this.office.getInteractable(a.objectId);
+    p.activeTask = null;
+    p.selfDirty = true;
+    p.shenaniganReadyAt = now + this.match.shenaniganCooldown * 1000;
+    this.chaosToday = Math.min(100, this.chaosToday + CHAOS.PER_SHENANIGAN);
+    this.roomDirty = true;
+
+    if (a.minigame === 'microwave') {
+      // The fish runs a while; the stink starts when it dings (updateMicrowaves).
+      this.microwaves.set(a.objectId, { state: 'running', ownerId: p.id, endsAt: now + runMs(a.puzzle), fish: true, food: 'fish' });
+      return this.toast(p, 'Fish is in. Walk away. Casually.');
+    }
+    if (s.effect === 'sick') {
+      this.spiked.add(a.objectId);
+      return this.toast(p, 'Done. The next person to drink from this cooler is going home early.');
+    }
+    if (s.effect === 'prank') {
+      const owner = [...this.players.values()].find((o) => o.deskId === a.objectId);
+      const content = PRANK_CONTENT.find((c) => c.id === answer?.content)?.id ?? 'memes';
+      if (owner) this.pranked.set(a.objectId, { victimId: owner.id, content, by: p.id });
+      p.prankedToday = true;
+      this.evidence.set(a.objectId, { kind: 'screen', objectId: a.objectId, at: now, until: null, data: { content } });
+      return this.toast(p, `IT is going to have questions for ${owner?.name ?? 'them'} at 5 PM.`);
+    }
+    if (a.minigame === 'whiteboard') {
+      p.lastDrawing = a.puzzle.drawing;
+      this.board = { ink: cleanInk(answer?.ink), drawing: a.puzzle.drawing };
+      this.liveBoard = null;
+      this.broadcast(S2C.BOARD, { final: this.board, live: null });
+    }
+    if (s.evidence) this.leaveEvidence(s.evidence, p, object, now);
+    this.toast(p, `Done: ${s.label}.`);
+  }
+
+  /**
+   * A task got done. Productive versions clean up any mess at that object;
+   * slacker versions may leave evidence there.
+   */
+  onTaskFinished(p, finished, objectId, now = this.now) {
+    const object = objectId ? this.office.getInteractable(objectId) : null;
+    if (!p.isSlacker && object && this.evidence.has(object.id) && this.evidence.get(object.id).kind !== 'screen') {
+      this.evidence.delete(object.id);
+      this.broadcast(S2C.EVENT, { kind: 'cleaned', where: this.office.roomName(object.x, object.y), objectId: object.id });
+    }
+    this.roomDirty = true;
+
     const left = p.tasks.filter((t) => !t.done).length;
     let msg = `Done: ${finished.label}.`;
-    if (allIn && !left) {
-      msg = p.isTeam ? 'All tasks done. Keep blending in.' : 'All tasks done! Clock out at the time clock in the Lobby.';
+    if (p.tasks.length >= this.match.tasks && !left) {
+      msg = 'All your work for today is done. Keep an eye out for slackers.';
     } else if (!left) {
       msg += ' Next task arrives soon.';
     }
     this.toast(p, msg);
-  }
-
-  clockOut(p, now) {
-    if (p.isManagement) return this.toast(p, "Management doesn't clock out. Keep an eye on the floor.");
-    if (p.isSnitch) return this.toast(p, 'Snitches stay late. Management needs you on the floor.');
-    const total = this.match.tasks;
-    if (p.tasks.length < total) {
-      return this.toast(p, `More work is on the way (${p.tasks.length} of ${total} tasks handed out so far).`);
-    }
-    if (!this.tasks.allDone(p, total)) {
-      return this.toast(p, `Finish your tasks first (${p.tasks.filter((t) => t.done).length}/${total}).`);
-    }
-
-    p.status = STATUS.HOME;
-    p.input = { dx: 0, dy: 0 };
-    p.selfDirty = true;
-    this.broadcast(S2C.EVENT, { kind: 'went_home', playerId: p.id, name: p.name });
-    this.roomDirty = true;
     this.checkWin(now);
   }
 
-  handleReport(p, targetId, now) {
-    this.now = now;
-    if (!this.canAct(p, now)) return;
-    const target = typeof targetId === 'string' ? this.players.get(targetId) : null;
-    const check = this.roles.validateReport(p, target, now, this.match.reportRange);
-    if (!check.ok) return this.toast(p, check.reason);
-    if (this.currentBreak(now) && this.office.inBreakArea(target.x, target.y)) {
-      return this.toast(p, `${target.name} is on break. Leave them be.`);
+  /** A slacker made a mess: mark it now, tell the office about it in a few seconds. */
+  leaveEvidence(kind, p, object, now) {
+    const def = EVIDENCE[kind];
+    if (!def) return;
+    // Desk tasks (chain emails) happen at your own desk.
+    const desk = this.office.desksById.get(p.deskId);
+    const at = object ?? desk ?? null;
+    const where = at ? this.office.roomName(at.x + at.w / 2, at.y + at.h / 2) : 'office';
+    if (object && kind !== 'chain_email') {
+      this.evidence.set(object.id, {
+        kind, objectId: object.id, at: now, until: def.ttl ? now + def.ttl : null,
+        data: kind === 'doodle' ? { drawing: p.lastDrawing ?? null } : null,
+      });
     }
-
-    this.roles.consumeReport(p, now, this.match.reportCooldown);
-    this.sendHome(target);
-
-    // Everyone learns who was caught and where, but not who reported them.
-    this.broadcast(S2C.EVENT, {
-      kind: 'reported', playerId: target.id, name: target.name, where: this.office.roomName(target.x, target.y),
-    });
-    this.toast(p, `${target.name} was fired.`);
-    this.checkWin(now);
+    if (def.announce) this.announcements.push({ at: now + def.delay, event: { kind: 'evidence', evidence: kind, text: def.announce.replace('{room}', where) } });
+    this.announcements.sort((x, y) => x.at - y.at);
   }
 
   sendHome(target) {
@@ -467,74 +746,55 @@ export class Game {
   }
 
   // ===========================================================================
-  // Stand-up meetings (called "desk checks" in the code): Management announces
-  // one, and after the warning countdown anyone (other than Management) who
-  // isn't at their own desk is fired.
+  // The whiteboard, live: while someone does the whiteboard task, everyone who
+  // can see the board watches it being drawn.
   // ===========================================================================
 
-  handleDeskCheck(p, now) {
-    this.now = now;
-    if (!this.canAct(p, now)) return;
-    if (!p.isManagement) return this.toast(p, 'Only Management can call a stand-up.');
-    if (this.deskCheck) return this.toast(p, 'A stand-up is already happening.');
-    if (now < p.deskCheckReadyAt) {
-      return this.toast(p, `Stand-up is on cooldown (${Math.ceil((p.deskCheckReadyAt - now) / 1000)}s).`);
-    }
-    const warningMs = this.match.deskCheckWarning * 1000;
-    const brk = this.currentBreak(now);
-    if (brk) return this.toast(p, `No stand-ups during ${brk.label.toLowerCase()}.`);
-    const upcoming = nextBreak(this.breaks, this.dayClock(now));
-    if (upcoming && upcoming.startMs < this.dayClock(now) + warningMs) {
-      return this.toast(p, `${upcoming.label} starts before a stand-up would finish.`);
-    }
-    this.deskCheck = { endsAt: now + warningMs, startedAt: now };
-    p.deskCheckReadyAt = Infinity; // set properly when it resolves
-    p.selfDirty = true;
-    this.broadcast(S2C.EVENT, { kind: 'desk_check', seconds: this.match.deskCheckWarning });
-    this.roomDirty = true;
+  handleWhiteboardInk(p, ink, now) {
+    if (!this.canAct(p, now) || p.activeTask?.minigame !== 'whiteboard') return;
+    this.liveBoard = { playerId: p.id, ink: cleanInk(ink) };
+    this.sendLiveBoard();
   }
 
-  resolveDeskCheck(now) {
-    this.deskCheck = null;
-    const caught = [];
-    for (const o of this.players.values()) {
-      if (!o.isActive || o.isManagement) continue;
-      if (this.roles.isAtDesk(o)) continue;
-      this.sendHome(o);
-      caught.push({ id: o.id, name: o.name });
+  /** Can this player see the whiteboard right now (in range, in front of it, nothing in the way)? */
+  canSeeBoard(viewer) {
+    if (!viewer.isActive || this.phase !== PHASE.PLAYING) return true; // fired players watch everything
+    const b = this.office.getInteractable('whiteboard');
+    if (!b) return false;
+    const x = Math.max(b.x, Math.min(b.x + b.w, viewer.x));
+    const y = b.y + b.h;
+    if (viewer.y < b.y) return false;                                    // behind it
+    if (Math.hypot(viewer.x - x, viewer.y - y) > this.rules.sightRange) return false;
+    return lineOfSight(this.office, viewer.x, viewer.y, x, y);
+  }
+
+  sendLiveBoard() {
+    for (const v of this.players.values()) {
+      if (v.connected && this.canSeeBoard(v)) this.send(v.id, S2C.BOARD, { live: this.liveBoard });
     }
-    const mgmt = [...this.players.values()].find((o) => o.isManagement);
-    if (mgmt) {
-      mgmt.deskCheckReadyAt = now + this.match.deskCheckCooldown * 1000;
-      mgmt.selfDirty = true;
-    }
-    this.broadcast(S2C.EVENT, { kind: 'desk_check_done', caught });
-    this.roomDirty = true;
-    this.checkWin(now);
   }
 
   // ===========================================================================
-  // HR complaints: at the HR box in the Lobby, an employee can report someone
-  // they think is a snitch. Once per game. If they're right, the snitch is
-  // fired. If they're wrong, HR fires the person who complained.
+  // HR complaints: at the HR box in the Lobby, anyone can report someone they
+  // think is a slacker. Once per game. If they're right, the slacker is fired.
+  // If they're wrong, HR fires the person who complained.
   // ===========================================================================
 
   handleHrReport(p, targetId, now) {
     this.now = now;
     if (!this.canAct(p, now)) return;
-    if (p.isManagement) return this.toast(p, "Management doesn't file HR complaints. You ARE the complaints.");
     if (p.hrReportUsed) return this.toast(p, "You've already filed your one HR complaint.");
     const box = this.office.interactables.find((o) => o.type === 'hr_box');
-    if (!box || distPointRect(p.x, p.y, box) > INTERACT_RANGE) return this.toast(p, 'Complaints go in the HR box in the Lobby.');
+    if (!box || !canReach(this.office, p.x, p.y, box, INTERACT_RANGE)) return this.toast(p, 'Complaints go in the HR box in the Lobby.');
     const target = typeof targetId === 'string' ? this.players.get(targetId) : null;
     if (!target || target === p || !target.isActive) return this.toast(p, 'Pick someone who is still in the office.');
 
     p.hrReportUsed = true;
     p.selfDirty = true;
     this.tasks.cancel(p);
-    if (target.isSnitch) {
+    if (target.isSlacker) {
       this.sendHome(target);
-      this.broadcast(S2C.EVENT, { kind: 'hr', outcome: 'snitch', playerId: target.id, name: target.name });
+      this.broadcast(S2C.EVENT, { kind: 'hr', outcome: 'slacker', playerId: target.id, name: target.name });
     } else {
       this.sendHome(p);
       this.broadcast(S2C.EVENT, { kind: 'hr', outcome: 'false', playerId: p.id, name: p.name, accusedId: target.id, accused: target.name });
@@ -543,7 +803,6 @@ export class Game {
   }
 
   handleInteractHrBox(p) {
-    if (p.isManagement) return this.toast(p, "Management doesn't file HR complaints. You ARE the complaints.");
     if (p.hrReportUsed) return this.toast(p, "You've already filed your one HR complaint.");
     this.toast(p, 'Pick who to report in the complaint form.');
   }
@@ -569,7 +828,6 @@ export class Game {
   // ===========================================================================
 
   callMeeting(p, now) {
-    if (this.deskCheck) return this.toast(p, 'Stand-up meeting! Get to your desk!');
     if (p.emergencyCallsLeft <= 0) return this.toast(p, "You've used your all-hands call.");
     if (now < this.meetingAvailableAt) {
       return this.toast(p, `The bell is on cooldown (${Math.ceil((this.meetingAvailableAt - now) / 1000)}s).`);
@@ -612,13 +870,13 @@ export class Game {
   }
 
   resolveVote(now) {
-    const result = this.meetings.close(now);
+    const candidates = [...this.players.values()].filter((o) => o.isActive).map((o) => o.id);
+    const result = this.meetings.close(now, candidates);
     if (result.ejectedId) {
       const ejected = this.players.get(result.ejectedId);
       ejected.status = STATUS.SENT_HOME;
       ejected.selfDirty = true;
       result.ejectedRole = ejected.role; // revealed to everyone
-      result.wasManagement = ejected.isManagement;
       this.broadcast(S2C.EVENT, { kind: 'ejected', playerId: ejected.id, name: ejected.name, role: ejected.role });
       this.roomDirty = true;
     }
@@ -627,10 +885,24 @@ export class Game {
 
   endMeeting(now) {
     this.now = now;
+    const wasEod = this.meetings.current?.kind === 'eod';
     this.meetings.end();
     this.phase = PHASE.PLAYING;
     this.resumeDay(now);
     if (this.checkWin(now)) return;
+    if (wasEod) {
+      // That was the last day: the slackers made it through the week.
+      if (this.dayNumber >= this.match.days) {
+        return this.endGame('slackers', `The week is over and the slackers are still on the payroll.`, now);
+      }
+      this.beginDay(now, START_FREEZE_MS);
+      this.broadcast(S2C.EVENT, { kind: 'new_day', day: this.dayNumber, days: this.match.days });
+      this.broadcast(S2C.MEETING, { stage: 'closed' });
+      this.broadcastRoom();
+      for (const p of this.players.values()) this.sendSelf(p, now);
+      this.sendSnapshots();
+      return;
+    }
 
     // Everyone goes back to their desk, then a short freeze.
     for (const o of this.players.values()) {
@@ -649,19 +921,17 @@ export class Game {
 
   // ===========================================================================
   // Chat channels
-  //   all  : everyone. Lobby, all-hands meetings and after the game.
-  //   team : the back office. Management + snitches, any time during the match.
-  //   crew : the water cooler. Workers + snitches, any time during the match.
-  //          Management never sees it, which is exactly why snitches are useful.
-  // During the match only people still in the office can post; anyone who
-  // has gone home can keep reading their channels.
+  //   all  : everyone. Lobby, all-hands meetings, and after the game.
+  //   crew : the water cooler. Everyone, any time during the day.
+  //   team : the slackers' group chat. Slackers only, any time during the day.
+  // During the match only people still in the office can post; anyone who's
+  // been fired can keep reading.
   // ===========================================================================
 
   /** Who may read a private channel. */
   canRead(p, channel) {
-    if (channel === 'team') return p.isTeam;
-    if (channel === 'crew') return !p.isManagement;
-    return true;
+    if (channel === 'team') return p.isSlacker; // slackers' group chat
+    return true;                                // crew = water cooler, all = everyone
   }
 
   handleChat(p, rawText, channel, now) {
@@ -695,13 +965,21 @@ export class Game {
   // Win conditions (all evaluated here, never on the client)
   // ===========================================================================
 
-  workdayProgress() {
-    // Only real workers count. Snitches can't clock out and don't count.
-    const workers = [...this.players.values()].filter((p) => p.role === ROLE.WORKER && p.status !== STATUS.LEFT);
-    const goal = Math.max(1, Math.ceil(workers.length * GO_HOME_RATIO));
-    const home = workers.filter((p) => p.status === STATUS.HOME).length;
-    const inOffice = workers.filter((p) => p.status === STATUS.ACTIVE).length;
-    return { goal, home, inOffice };
+  /**
+   * Today's meters. Productivity: productive employees' tasks done today (people
+   * fired or sick keep what they did; their unfinished tasks drop out). Chaos:
+   * today's shenanigans (messes still around at 5 PM count extra in the report).
+   */
+  meters() {
+    if (!this.match) return { productivity: 0, chaos: 0, target: 0 };
+    let done = 0, total = 0;
+    for (const p of this.players.values()) {
+      if (p.isSlacker) continue;
+      const d = p.tasks.filter((x) => x.done).length;
+      done += d;
+      total += p.isActive ? this.match.tasks : d;
+    }
+    return { productivity: total ? Math.min(1, done / total) : 0, chaos: Math.min(1, this.chaosToday / 100), target: this.match.target / 100 };
   }
 
   /** Returns true if the game ended. */
@@ -709,37 +987,33 @@ export class Game {
     if (this.phase !== PHASE.PLAYING && this.phase !== PHASE.MEETING) return false;
     if (this.sandbox && !Sandbox.sandboxWinsEnabled(this)) return false; // SANDBOX: wins on request only
 
-    const mgmt = [...this.players.values()].find((p) => p.isManagement);
-    if (!mgmt || mgmt.status === STATUS.LEFT) return this.endGame('workers', 'Management left the building.', now);
+    // Sick people still count: they'll be back tomorrow.
+    const employed = [...this.players.values()].filter((p) => p.isActive || p.status === STATUS.SICK);
+    const slackers = employed.filter((p) => p.isSlacker).length;
+    const productive = employed.length - slackers;
+    if (!slackers) return this.endGame('productive', 'Every slacker has been fired. The office is finally productive.', now);
     // During a meeting, let the result screen play out; endMeeting() checks again.
     if (this.phase === PHASE.MEETING) return false;
-    if (mgmt.status === STATUS.SENT_HOME) return this.endGame('workers', `${mgmt.name} was Management, and got voted out.`, now);
-
-    const { goal, home, inOffice } = this.workdayProgress();
-    if (home >= goal) return this.endGame('workers', 'Enough of the team clocked out. The workday is done.', now);
-    if (home + inOffice < goal) return this.endGame('management', 'Too few workers are left to finish the workday.', now);
-    if (this.day && this.dayClock(now) >= this.day.lengthMs) {
-      return this.endGame('management', 'Five o\u2019clock came and too few people had clocked out.', now);
-    }
+    if (slackers >= productive) return this.endGame('slackers', 'There are as many slackers as productive employees left. Nothing will ever get done again.', now);
+    // 5 PM: the end-of-day report.
+    if (this.day && this.dayClock(now) >= this.day.lengthMs) { this.startEndOfDay(now); return false; }
     return false;
   }
 
   endGame(winner, reason, now) {
     this.meetings.end();
     this.phase = PHASE.ENDED;
-    this.deskCheck = null;
     for (const p of this.players.values()) {
       p.input = { dx: 0, dy: 0 };
       this.tasks.cancel(p);
     }
-    const mgmt = [...this.players.values()].find((p) => p.isManagement);
-    const snitches = [...this.players.values()].filter((p) => p.isSnitch);
+    const slackers = [...this.players.values()].filter((p) => p.isSlacker);
     this.result = {
-      winner,
+      winner,          // 'productive' | 'slackers'
       reason,
-      managementId: mgmt?.id ?? null,
-      managementName: mgmt?.name ?? null,
-      snitches: snitches.map((s) => ({ id: s.id, name: s.name })),
+      slackers: slackers.map((s) => ({ id: s.id, name: s.name })),
+      meters: this.meters(),
+      day: this.dayNumber,
     };
     this.broadcast(S2C.GAME_OVER, this.result);
     this.broadcastRoom();
@@ -780,14 +1054,22 @@ export class Game {
           p.x = next.x;
           p.y = next.y;
         }
+        const active = p.activeTask;
         const finished = this.tasks.update(p, now);
-        if (finished) this.onTaskFinished(p, finished);
+        if (finished && active?.shenanigan) this.finishShenanigan(p, active, null, now);
+        else if (finished) this.onTaskFinished(p, finished, active?.objectId, now);
       }
       if (!frozen) {
         this.issueDueTasks(now);
         this.updateBreak(now);
       }
-      if (this.deskCheck && now >= this.deskCheck.endsAt) this.resolveDeskCheck(now);
+      this.updateEvidence(now);
+      this.updateMicrowaves(now);
+      // The drawer stopped (walked away, closed the window): wipe the live view.
+      if (this.liveBoard && this.players.get(this.liveBoard.playerId)?.activeTask?.minigame !== 'whiteboard') {
+        this.liveBoard = null;
+        this.broadcast(S2C.BOARD, { live: null });
+      }
       if (this.phase === PHASE.PLAYING) {
         this.checkWin(now);
         this.sendSnapshots();
@@ -796,7 +1078,10 @@ export class Game {
 
     if (this.phase === PHASE.MEETING && this.meetings.current) {
       const m = this.meetings.current;
-      if (m.stage === 'discussing' && (now >= m.endsAt || this.meetings.everyoneVoted())) this.resolveVote(now);
+      if (m.stage === 'report' && now >= m.endsAt) {
+        if (m.voteNeeded) { this.meetings.openVoting(now); this.broadcast(S2C.MEETING, this.meetings.serialize(now)); }
+        else this.resolveVote(now);
+      } else if (m.stage === 'discussing' && (now >= m.endsAt || this.meetings.everyoneVoted())) this.resolveVote(now);
       else if (m.stage === 'results' && now >= m.endsAt) this.endMeeting(now);
     }
 
@@ -809,6 +1094,16 @@ export class Game {
     }
 
     if (this.roomDirty) this.broadcastRoom();
+  }
+
+  /** Send evidence news that's due; let marks with a time limit fade. */
+  updateEvidence(now) {
+    while (this.announcements.length && this.announcements[0].at <= now) {
+      this.broadcast(S2C.EVENT, this.announcements.shift().event);
+    }
+    for (const [id, e] of this.evidence) {
+      if (e.until && now >= e.until) { this.evidence.delete(id); this.roomDirty = true; }
+    }
   }
 
   // ===========================================================================
@@ -866,7 +1161,7 @@ export class Game {
   }
 
   roomState() {
-    const progress = this.phase === PHASE.LOBBY ? null : this.workdayProgress();
+    const progress = this.phase === PHASE.LOBBY ? null : this.meters();
     return {
       code: this.code,
       phase: this.phase,
@@ -878,7 +1173,13 @@ export class Game {
       settings: this.rules,
       progress,
       day: this.dayState(),
-      deskCheck: this.deskCheck ? { msLeft: Math.max(0, this.deskCheck.endsAt - this.now) } : null,
+      // Messes around the office (public: anyone who walks past can see them).
+      evidence: [...this.evidence.values()].map((e) => ({ kind: e.kind, objectId: e.objectId, ageMs: this.now - e.at, data: e.data })),
+      dayNumber: this.dayNumber,
+      days: this.match?.days ?? this.settings.days,
+      // Everyone can see a microwave's timer.
+      microwaves: [...this.microwaves].map(([id, m]) => ({ id, state: m.state, msLeft: Math.max(0, m.endsAt - this.now), fish: m.fish, food: m.food, ownerId: m.ownerId })),
+      whiteboard: this.whiteboard,
     };
   }
 
@@ -889,8 +1190,9 @@ export class Game {
 
   /** Private to one player: their role, desk, tasks and (for the team) teammates. */
   selfState(p, now) {
-    const team = p.isTeam
-      ? [...this.players.values()].filter((o) => o.isTeam && o !== p).map((o) => ({ id: o.id, role: o.role }))
+    // Slackers know who the other slackers are.
+    const team = p.isSlacker
+      ? [...this.players.values()].filter((o) => o.isSlacker && o !== p).map((o) => ({ id: o.id, role: o.role }))
       : [];
     return {
       role: p.role,
@@ -899,10 +1201,11 @@ export class Game {
       ...this.tasks.serialize(p, now),
       totalTasks: this.match?.tasks ?? 0,
       team,
-      reportReadyIn: p.isManagement ? Math.max(0, p.reportReadyAt - now) : null,
-      deskCheckReadyIn: p.isManagement && Number.isFinite(p.deskCheckReadyAt) ? Math.max(0, p.deskCheckReadyAt - now) : null,
       emergencyLeft: p.emergencyCallsLeft,
       hrReportUsed: !!p.hrReportUsed,
+      // Slackers: when the next shenanigan is allowed, and whether today's prank is used.
+      shenaniganReadyIn: p.isSlacker ? Math.max(0, (p.shenaniganReadyAt ?? 0) - now) : null,
+      prankedToday: !!p.prankedToday,
       meetingReadyIn: Math.max(0, this.meetingAvailableAt - now),
       freezeMs: Math.max(0, this.freezeUntil - now),
     };

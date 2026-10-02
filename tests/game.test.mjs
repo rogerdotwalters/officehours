@@ -5,14 +5,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../server/game/Game.js';
-import { PHASE, STATUS, ROLE, START_FREEZE_MS, REPORT_INITIAL_COOLDOWN_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS, DESK_CHECK_INITIAL_DELAY_MS } from '../shared/constants.js';
-import { DEFAULT_SETTINGS, sanitizeSettings } from '../shared/settings.js';
+import { PHASE, STATUS, ROLE, START_FREEZE_MS, MEETING_COOLDOWN_MS, TICK_MS, MAX_PLAYERS } from '../shared/constants.js';
+import { DEFAULT_SETTINGS, sanitizeSettings, effectiveSlackers } from '../shared/settings.js';
 import { LOBBY_ROOM } from '../shared/lobbyMap.js';
-import { TASKS } from '../shared/tasks.js';
+import { TASKS, TASKS_BY_ID, taskVersion } from '../shared/tasks.js';
+import { EVIDENCE, CHAOS } from '../shared/evidence.js';
+import { breakWindows } from '../shared/breaks.js';
 import { TaskSystem } from '../server/game/TaskSystem.js';
 import { S2C } from '../shared/protocol.js';
 import { buildOfficeMap, distPointRect } from '../shared/mapBuilder.js';
 import { positionBlocked } from '../shared/physics.js';
+
+const T0 = 1_000_000;
+const DAY = T0 + START_FREEZE_MS;   // when the workday starts
 
 function makeGame() {
   const outbox = [];
@@ -24,201 +29,44 @@ function makeGame() {
   return { game, outbox };
 }
 
-function startedGame(n = 4, settings = { snitches: 0 }) {
+function startedGame(n = 4, settings = {}) {
   const { game, outbox } = makeGame();
-  let now = 1_000_000;
   const players = [];
-  for (let i = 0; i < n; i++) players.push(game.join(`P${i}`, null, now).player);
+  for (let i = 0; i < n; i++) players.push(game.join(`P${i}`, null, T0).player);
   game.handleSettings(players[0], settings);
   players.slice(1).forEach((p) => game.handleReady(p, true));
-  game.handleStart(players[0], now);
+  game.handleStart(players[0], T0);
   assert.equal(game.phase, PHASE.PLAYING);
-  const mgmt = players.find((p) => p.isManagement);
-  const workers = players.filter((p) => p.role === ROLE.WORKER);
-  const snitches = players.filter((p) => p.isSnitch);
-  return { game, outbox, players, mgmt, workers, snitches, now };
+  const slackers = players.filter((p) => p.isSlacker);
+  const productive = players.filter((p) => !p.isSlacker);
+  return { game, outbox, players, slackers, productive };
 }
 
-/** Mark every task of the day as handed out and done. */
+/** Stand a player right next to an object. */
+function standAt(game, p, objectId) {
+  const o = game.office.getInteractable(objectId);
+  p.x = o.x + o.w / 2;
+  p.y = o.y + o.h + 20;
+  if (positionBlocked(game.office, p.x, p.y, 14)) p.y = o.y - 20;
+}
+
+/** Mark all of a player's tasks for the day as handed out and done. */
 function finishDay(game, p) {
-  p.tasks = Array.from({ length: game.match.tasks }, (_, i) => ({ id: TASKS[i].id, done: true }));
+  p.tasks = TASKS.slice(0, game.match.tasks).map((t) => ({ id: t.id, done: true }));
 }
 
-const lastToast = (outbox, id) => [...outbox].reverse().find((m) => m.to === id && m.t === S2C.TOAST)?.d.text;
+const lastToast = (outbox, id) => [...outbox].reverse().find((m) => m.to === id && m.t === S2C.TOAST)?.d.text ?? '';
+const events = (outbox, kind) => outbox.filter((m) => m.t === S2C.EVENT && m.d.kind === kind).map((m) => m.d);
+
+// ===========================================================================
+// Map and lobby
+// ===========================================================================
 
 test('map: every seat, meeting seat and spawn is free space', () => {
   const map = buildOfficeMap();
   for (const d of map.desks) assert.equal(positionBlocked(map, d.seat.x, d.seat.y, 14), false, d.id);
-  for (const s of map.meetingSeats) assert.equal(positionBlocked(map, s.x, s.y, 14), false, JSON.stringify(s));
+  for (const s of map.meetingSeats) assert.equal(positionBlocked(map, s.x, s.y, 14), false, 'meeting seat');
   assert.ok(map.desks.length >= MAX_PLAYERS);
-});
-
-test('lobby: room cap, unique names and colours, host start rules', () => {
-  const { game } = makeGame();
-  const a = game.join('Sam', null, 0).player;
-  const b = game.join('sam', null, 0).player;
-  assert.notEqual(a.name.toLowerCase(), b.name.toLowerCase());
-  assert.notEqual(a.colorId, b.colorId);
-  for (let i = 2; i < MAX_PLAYERS; i++) game.join(`X${i}`, null, 0);
-  assert.equal(game.join('Late', null, 0).error.code, 'full');
-
-  game.handleStart(b, 0); // not host
-  assert.equal(game.phase, PHASE.LOBBY);
-  game.handleStart(a, 0); // not everyone ready
-  assert.equal(game.phase, PHASE.LOBBY);
-});
-
-test('roles: exactly one Management, roles never in public info', () => {
-  const { players, outbox } = startedGame(6);
-  assert.equal(players.filter((p) => p.isManagement).length, 1);
-  const rooms = outbox.filter((m) => m.t === S2C.ROOM);
-  for (const r of rooms) for (const p of r.d.players) assert.equal('role' in p, false);
-  for (const s of outbox.filter((m) => m.t === S2C.SELF)) {
-    const target = players.find((p) => p.id === s.to);
-    assert.equal(s.d.role, target.role); // SELF only goes to its owner
-  }
-});
-
-test('movement: frozen at start, then server moves by input and respects walls', () => {
-  const { game, workers } = startedGame();
-  const w = workers[0];
-  let now = 1_000_000;
-  const start = { x: w.x, y: w.y };
-  game.handleInput(w, 0, 1);
-  game.tick(now + 100);
-  assert.deepEqual({ x: w.x, y: w.y }, start, 'frozen during role reveal');
-
-  now += START_FREEZE_MS + 10;
-  for (let i = 0; i < 200; i++) game.tick(now + i * TICK_MS);
-  assert.ok(w.y > start.y, 'moved');
-  assert.ok(w.y < 1400, 'stayed inside building');
-  // A hacked client sending huge values still only gets a unit direction.
-  game.handleInput(w, 9999, 0);
-  assert.deepEqual(w.input, { dx: 1, dy: 0 });
-});
-
-test('tasks: must stay in range for the full duration', () => {
-  const { game, workers } = startedGame();
-  const w = workers[0];
-  const now = 1_000_000 + START_FREEZE_MS + 10;
-  const desk = game.office.getInteractable(w.deskId);
-  w.tasks = [{ id: 'tps', done: false }];
-
-  game.handleInteract(w, w.deskId, now);
-  assert.ok(w.activeTask, 'desk task started');
-  const dur = w.activeTask.duration;
-  game.tick(now + dur / 2);
-  assert.equal(w.tasks.filter((t) => t.done).length, 0);
-  game.tick(now + dur + 1);
-  assert.equal(w.tasks.filter((t) => t.done).length, 1);
-
-  // Far-away object is rejected.
-  game.handleInteract(w, 'shredder', now + dur + 10);
-  assert.equal(w.activeTask, null);
-  assert.ok(desk);
-});
-
-test('reports: blocked at desk, on cooldown, out of range; allowed when caught away', () => {
-  const { game, outbox, mgmt, workers } = startedGame();
-  const w = workers[0];
-  let now = 1_000_000 + START_FREEZE_MS + 10;
-
-  // Cooldown at start
-  mgmt.x = w.x; mgmt.y = w.y - 40;
-  w.x = 300; w.y = 540; mgmt.x = 340; mgmt.y = 540; // both in the hallway
-  game.handleReport(mgmt, w.id, now);
-  assert.equal(w.status, STATUS.ACTIVE);
-  assert.match(lastToast(outbox, mgmt.id), /cooldown/);
-
-  now += REPORT_INITIAL_COOLDOWN_MS;
-  // Worker at desk is safe
-  const seat = game.roles.seatOf(w);
-  w.x = seat.x; w.y = seat.y; mgmt.x = seat.x + 60; mgmt.y = seat.y;
-  game.handleReport(mgmt, w.id, now);
-  assert.equal(w.status, STATUS.ACTIVE);
-
-  // Too far away
-  w.x = 300; w.y = 540; mgmt.x = 1800; mgmt.y = 540;
-  game.handleReport(mgmt, w.id, now);
-  assert.equal(w.status, STATUS.ACTIVE);
-
-  // Caught in the hallway
-  mgmt.x = 400;
-  game.handleReport(mgmt, w.id, now);
-  assert.equal(w.status, STATUS.SENT_HOME);
-
-  // Workers cannot report
-  const w2 = workers[1];
-  game.handleReport(w2, mgmt.id, now);
-  assert.equal(mgmt.status, STATUS.ACTIVE);
-});
-
-test('meeting: voting out Management ends the game for workers', () => {
-  const { game, mgmt, workers, players } = startedGame(4);
-  let now = 1_000_000 + START_FREEZE_MS + MEETING_COOLDOWN_MS + 10;
-  const caller = workers[0];
-  const bell = game.office.getInteractable('bell');
-  caller.x = bell.x + bell.w / 2; caller.y = bell.y + bell.h + 20;
-  game.handleInteract(caller, 'bell', now);
-  assert.equal(game.phase, PHASE.MEETING);
-
-  for (const p of players) game.handleVote(p, mgmt.id, now);
-  game.tick(now + 10);     // everyone voted -> results
-  assert.equal(game.meetings.current.stage, 'results');
-  game.tick(now + 60_000); // results over
-  assert.equal(game.phase, PHASE.ENDED);
-  assert.equal(game.result.winner, 'workers');
-});
-
-test('meeting: tie ejects nobody and play resumes at desks', () => {
-  const { game, mgmt, workers } = startedGame(4);
-  const now = 1_000_000 + START_FREEZE_MS + MEETING_COOLDOWN_MS + 10;
-  game.startMeeting(workers[0], now);
-  game.handleVote(workers[0], mgmt.id, now);
-  game.handleVote(workers[1], workers[2].id, now);
-  game.handleVote(workers[2], 'skip', now);
-  game.handleVote(mgmt, 'skip', now);
-  game.tick(now + 10);
-  assert.equal(game.meetings.current.result.ejectedId, null);
-  game.tick(now + 60_000);
-  assert.equal(game.phase, PHASE.PLAYING);
-  const seat = game.roles.seatOf(workers[1]);
-  assert.deepEqual({ x: workers[1].x, y: workers[1].y }, seat);
-});
-
-test('win: enough workers clock out', () => {
-  const { game, workers } = startedGame(5); // 4 workers -> goal 2
-  const now = 1_000_000 + START_FREEZE_MS + 10;
-  const clock = game.office.getInteractable('time_clock');
-  for (const w of workers.slice(0, 2)) {
-    finishDay(game, w);
-    w.x = clock.x + clock.w / 2; w.y = clock.y - 20;
-    game.handleInteract(w, 'time_clock', now);
-  }
-  assert.equal(game.phase, PHASE.ENDED);
-  assert.equal(game.result.winner, 'workers');
-});
-
-test('win: Management wins when the goal becomes unreachable', () => {
-  const { game, mgmt, workers } = startedGame(3); // 2 workers -> goal 1
-  let now = 1_000_000 + START_FREEZE_MS + REPORT_INITIAL_COOLDOWN_MS + 10;
-  for (const w of workers) {
-    w.x = 300; w.y = 540; mgmt.x = 350; mgmt.y = 540;
-    game.handleReport(mgmt, w.id, now);
-    now += 30_000;
-  }
-  assert.equal(game.phase, PHASE.ENDED);
-  assert.equal(game.result.winner, 'management');
-});
-
-test('reconnect: token resumes the same player mid-game; strangers cannot join', () => {
-  const { game, workers } = startedGame();
-  const w = workers[0];
-  game.onDisconnect(w.id, 1_000_000);
-  assert.equal(game.join('Intruder', null, 1_000_001).error.code, 'in_progress');
-  const again = game.join('whatever', w.token, 1_000_002);
-  assert.equal(again.player, w);
-  assert.equal(again.resumed, true);
 });
 
 test('map: every desk, prop and meeting seat is reachable on foot', () => {
@@ -226,8 +74,7 @@ test('map: every desk, prop and meeting seat is reachable on foot', () => {
   const STEP = 8;
   const key = (x, y) => `${x},${y}`;
   const start = map.desks[0].seat;
-  const sx = Math.round(start.x / STEP) * STEP;
-  const sy = Math.round(start.y / STEP) * STEP;
+  const sx = Math.round(start.x / STEP) * STEP, sy = Math.round(start.y / STEP) * STEP;
   const seen = new Set([key(sx, sy)]);
   const queue = [[sx, sy]];
   while (queue.length) {
@@ -240,168 +87,28 @@ test('map: every desk, prop and meeting seat is reachable on foot', () => {
     }
   }
   const points = [...seen].map((k) => k.split(',').map(Number));
-  const reachable = (test) => points.some(([x, y]) => test(x, y));
-  for (const o of map.interactables) {
-    assert.ok(reachable((x, y) => distPointRect(x, y, o) <= 40), `can't reach ${o.id}`);
-  }
+  const reachable = (fn) => points.some(([x, y]) => fn(x, y));
+  for (const o of map.interactables) assert.ok(reachable((x, y) => distPointRect(x, y, o) <= 40), `can't reach ${o.id}`);
   for (const d of map.desks) assert.ok(reachable((x, y) => Math.hypot(x - d.seat.x, y - d.seat.y) < 12), `seat ${d.id}`);
   for (const s of map.meetingSeats) assert.ok(reachable((x, y) => Math.hypot(x - s.x, y - s.y) < 12), 'meeting seat');
-});
-
-// ===========================================================================
-// Settings, progressive tasks, snitches, desk checks, sight, lobby room
-// ===========================================================================
-
-test('settings: clamped, snapped, host-only, frozen at start', () => {
-  const s = sanitizeSettings({ playerSpeed: 9999, tasks: 4.4, sightRange: 'lots', bogus: 1 });
-  assert.equal(s.playerSpeed, 280);
-  assert.equal(s.tasks, 4);
-  assert.equal(s.sightRange, DEFAULT_SETTINGS.sightRange);
-  assert.equal('bogus' in s, false);
-
-  const { game } = makeGame();
-  const host = game.join('Host', null, 0).player;
-  const guest = game.join('Guest', null, 0).player;
-  game.handleSettings(guest, { tasks: 9 });
-  assert.equal(game.settings.tasks, DEFAULT_SETTINGS.tasks, 'guest cannot change settings');
-  game.handleSettings(host, { tasks: 9 });
-  assert.equal(game.settings.tasks, 9);
-});
-
-test('tasks: chance weights are respected and 0 means never', () => {
-  const catalogue = [
-    { id: 'a', target: 'x', duration: 1, chance: 9 },
-    { id: 'b', target: 'x', duration: 1, chance: 1 },
-    { id: 'off', target: 'x', duration: 1, chance: 0 },
-  ];
-  const ts = new TaskSystem(null, catalogue);
-  const counts = { a: 0, b: 0, off: 0 };
-  for (let i = 0; i < 4000; i++) {
-    const p = {};
-    ts.reset(p);
-    counts[ts.issueNext(p).id]++;
+  // Every task's target exists somewhere on the map.
+  for (const t of TASKS) {
+    if (!t.target.endsWith('_desk')) assert.ok(map.interactables.some((o) => o.type === t.target), `no ${t.target} for ${t.id}`);
   }
-  assert.equal(counts.off, 0);
-  assert.ok(counts.a > counts.b * 5, JSON.stringify(counts));
-
-  // No repeats within a match while the catalogue lasts.
-  const p = {};
-  ts.reset(p);
-  ts.issueNext(p); ts.issueNext(p);
-  assert.notEqual(p.tasks[0].id, p.tasks[1].id);
 });
 
-test('tasks: handed out one per section; clock pauses during meetings', () => {
-  const { game, players, workers } = startedGame(4, { snitches: 0, tasks: 4, workdayMinutes: 4 });
-  const section = 60_000; // 4 min / 4 tasks
-  const t0 = 1_000_000 + START_FREEZE_MS;
-  for (const p of players) assert.equal(p.tasks.length, 1, 'first task at the start');
-
-  game.tick(t0 + section - 100);
-  assert.equal(workers[0].tasks.length, 1);
-  game.tick(t0 + section + 10);
-  assert.equal(workers[0].tasks.length, 2, 'second task after one section');
-
-  // A 50s meeting doesn't eat into the workday.
-  game.startMeeting(workers[0], t0 + section + 100);
-  game.tick(t0 + section + 50_000);
-  game.endMeeting(t0 + section + 50_100);
-  game.tick(t0 + 2 * section + 10);
-  assert.equal(workers[0].tasks.length, 2, 'paused time does not count');
-  game.tick(t0 + 2 * section + 50_100);
-  assert.equal(workers[0].tasks.length, 3);
-
-  // Can't clock out before the last task has even been handed out.
-  workers[0].tasks.forEach((t) => (t.done = true));
-  const clock = game.office.getInteractable('time_clock');
-  workers[0].x = clock.x + clock.w / 2; workers[0].y = clock.y - 20;
-  game.handleInteract(workers[0], 'time_clock', t0 + 2 * section + 50_200);
-  assert.equal(workers[0].status, STATUS.ACTIVE);
-});
-
-test('workday: Management wins if the day ends first', () => {
-  const { game } = startedGame(4, { snitches: 0, tasks: 3, workdayMinutes: 3 });
-  const t0 = 1_000_000 + START_FREEZE_MS;
-  game.tick(t0 + 3 * 60_000 + 10);
-  assert.equal(game.phase, PHASE.ENDED);
-  assert.equal(game.result.winner, 'management');
-});
-
-test('snitches: count clamps to keep 2 real workers; private team chat', () => {
-  const small = startedGame(4, { snitches: 3 });
-  assert.equal(small.snitches.length, 1, '4 players -> 1 snitch max');
-  assert.equal(small.workers.length, 2);
-
-  const { game, outbox, mgmt, snitches, workers } = startedGame(7, { snitches: 2 });
-  assert.equal(snitches.length, 2);
-
-  // Team members learn about each other; workers learn nothing.
-  const selfOf = (p) => [...outbox].reverse().find((m) => m.to === p.id && m.t === S2C.SELF).d;
-  assert.deepEqual(selfOf(snitches[0]).team.map((t) => t.id).sort(), [mgmt.id, snitches[1].id].sort());
-  assert.deepEqual(selfOf(workers[0]).team, []);
-
-  // Back-office chat reaches only the team, and workers can't post to it.
-  outbox.length = 0;
-  game.handleChat(snitches[0], 'Blue is in the break room', 'team', 1);
-  const recipients = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
-  assert.deepEqual(recipients, [mgmt.id, ...snitches.map((s) => s.id)].sort());
-  outbox.length = 0;
-  game.handleChat(workers[0], 'let me in', 'team', 1);
-  assert.equal(outbox.filter((m) => m.t === S2C.CHAT).length, 0);
-
-  // Snitches can't clock out, and don't count toward the workers' goal.
-  finishDay(game, snitches[0]);
-  const clock = game.office.getInteractable('time_clock');
-  snitches[0].x = clock.x + clock.w / 2; snitches[0].y = clock.y - 20;
-  game.handleInteract(snitches[0], 'time_clock', 1_000_000 + START_FREEZE_MS + 10);
-  assert.equal(snitches[0].status, STATUS.ACTIVE);
-  assert.equal(game.workdayProgress().goal, 2); // 4 real workers
-});
-
-test('desk check: away from your desk when it ends = sent home', () => {
-  const { game, mgmt, workers } = startedGame(4, { snitches: 0, deskCheckWarning: 10, deskCheckCooldown: 60 });
-  let now = 1_000_000 + START_FREEZE_MS + 10;
-
-  game.handleDeskCheck(workers[0], now + DESK_CHECK_INITIAL_DELAY_MS);
-  assert.equal(game.deskCheck, null, 'workers cannot call one');
-  game.handleDeskCheck(mgmt, now);
-  assert.equal(game.deskCheck, null, 'initial cooldown');
-
-  now += DESK_CHECK_INITIAL_DELAY_MS;
-  game.handleDeskCheck(mgmt, now);
-  assert.ok(game.deskCheck);
-
-  const [atDesk, away] = workers;
-  const seat = game.roles.seatOf(atDesk);
-  atDesk.x = seat.x; atDesk.y = seat.y;
-  away.x = 300; away.y = 540;
-  mgmt.x = 1000; mgmt.y = 540; // Management itself is exempt
-  game.tick(now + 9_000);
-  assert.equal(away.status, STATUS.ACTIVE, 'still counting down');
-  game.tick(now + 10_001);
-  assert.equal(away.status, STATUS.SENT_HOME);
-  assert.equal(atDesk.status, STATUS.ACTIVE);
-  assert.equal(mgmt.status, STATUS.ACTIVE);
-  assert.equal(game.deskCheck, null);
-  assert.ok(mgmt.deskCheckReadyAt >= now + 10_000 + 60_000, 'cooldown starts after it resolves');
-});
-
-test('sight: snapshots only include players within sight range', () => {
-  const { game, outbox, workers } = startedGame(4, { snitches: 0, sightRange: 300 });
-  const [a, b, c] = workers;
-  a.x = 300; a.y = 540; b.x = 500; b.y = 540; c.x = 1500; c.y = 540;
-  outbox.length = 0;
-  game.tick(1_000_000 + START_FREEZE_MS + 10);
-  const snapFor = (p) => outbox.find((m) => m.to === p.id && m.t === S2C.SNAPSHOT).d.p.map((e) => e[0]);
-  const seen = snapFor(a);
-  assert.ok(seen.includes(a.id) && seen.includes(b.id));
-  assert.ok(!seen.includes(c.id), 'far player hidden');
-
-  // Out of the office: you can watch everyone.
-  c.status = STATUS.SENT_HOME;
-  outbox.length = 0;
-  game.tick(1_000_000 + START_FREEZE_MS + 60);
-  assert.ok(snapFor(c).includes(a.id) && snapFor(c).includes(b.id));
+test('lobby: room cap, unique names and colours, host start rules', () => {
+  const { game } = makeGame();
+  const a = game.join('Pam', null, 0).player;
+  const b = game.join('pam', null, 0).player;
+  assert.notEqual(a.name.toLowerCase(), b.name.toLowerCase());
+  assert.notEqual(a.colorId, b.colorId);
+  for (let i = 2; i < MAX_PLAYERS; i++) game.join(`P${i}`, null, 0);
+  assert.equal(game.join('Late', null, 0).error.code, 'full');
+  game.handleStart(b, 0);
+  assert.equal(game.phase, PHASE.LOBBY, 'only the host starts');
+  game.handleStart(a, 0);
+  assert.equal(game.phase, PHASE.LOBBY, 'everyone must be ready');
 });
 
 test('lobby: players spawn apart and can walk around the waiting room', () => {
@@ -412,186 +119,474 @@ test('lobby: players spawn apart and can walk around the waiting room', () => {
   const start = a.x;
   game.handleInput(a, 1, 0);
   for (let i = 0; i < 10; i++) game.tick(i * TICK_MS);
-  assert.ok(a.x > start, 'moved in the lobby');
-  assert.ok(a.x < LOBBY_ROOM.width);
+  assert.ok(a.x > start && a.x < LOBBY_ROOM.width);
 });
 
-test('lobby map: spawns are free and connected', () => {
-  const map = buildOfficeMap(LOBBY_ROOM);
-  for (const s of map.spawnPoints) assert.equal(positionBlocked(map, s.x, s.y, 14), false, JSON.stringify(s));
-  const STEP = 8;
-  const key = (x, y) => `${x},${y}`;
-  const s0 = map.spawnPoints[0];
-  const seen = new Set([key(s0.x, s0.y)]);
-  const queue = [[s0.x, s0.y]];
-  while (queue.length) {
-    const [x, y] = queue.pop();
-    for (const [dx, dy] of [[STEP, 0], [-STEP, 0], [0, STEP], [0, -STEP]]) {
-      const nx = x + dx, ny = y + dy, k = key(nx, ny);
-      if (seen.has(k) || positionBlocked(map, nx, ny, 14)) continue;
-      seen.add(k); queue.push([nx, ny]);
-    }
+test('settings: clamped, snapped, host-only; slackers always outnumbered', () => {
+  const s = sanitizeSettings({ playerSpeed: 9999, tasks: 4.4, sightRange: 'lots', bogus: 1 });
+  assert.equal(s.playerSpeed, 280);
+  assert.equal(s.tasks, 4);
+  assert.equal(s.sightRange, DEFAULT_SETTINGS.sightRange);
+  assert.equal('bogus' in s, false);
+  assert.equal(effectiveSlackers({ slackers: 3 }, 3), 1);
+  assert.equal(effectiveSlackers({ slackers: 3 }, 6), 2);
+  assert.equal(effectiveSlackers({ slackers: 3 }, 10), 3);
+
+  const { game } = makeGame();
+  const host = game.join('Host', null, 0).player;
+  const guest = game.join('Guest', null, 0).player;
+  game.handleSettings(guest, { tasks: 9 });
+  assert.equal(game.settings.tasks, DEFAULT_SETTINGS.tasks);
+  game.handleSettings(host, { tasks: 9 });
+  assert.equal(game.settings.tasks, 9);
+});
+
+// ===========================================================================
+// Roles and two-version tasks
+// ===========================================================================
+
+test('roles: slackers are secret; slackers know each other', () => {
+  const { game, outbox, slackers, productive } = startedGame(7, { slackers: 2 });
+  assert.equal(slackers.length, 2);
+  assert.equal(productive.length, 5);
+  for (const p of game.roomState().players) assert.equal('role' in p, false, 'roles never in public info');
+  const selfOf = (p) => [...outbox].reverse().find((m) => m.to === p.id && m.t === S2C.SELF).d;
+  assert.deepEqual(selfOf(slackers[0]).team.map((t) => t.id), [slackers[1].id]);
+  assert.deepEqual(selfOf(productive[0]).team, []);
+});
+
+test('tasks: same task, two versions; the role decides which', () => {
+  for (const t of TASKS) {
+    const p = taskVersion(t, ROLE.PRODUCTIVE), s = taskVersion(t, ROLE.SLACKER);
+    assert.ok(p.label && s.label && p.label !== s.label, `${t.id} has two labels`);
+    assert.equal(p.evidence, null, `${t.id}: productive work leaves no mess`);
+    if (s.evidence) assert.ok(EVIDENCE[s.evidence], `${t.id}: evidence kind exists`);
   }
-  const pts = [...seen].map((k) => k.split(',').map(Number));
-  for (const s of map.spawnPoints) assert.ok(pts.some(([x, y]) => Math.hypot(x - s.x, y - s.y) < 12), JSON.stringify(s));
+  const { game, slackers, productive } = startedGame(4);
+  const now = DAY + 10;
+  for (const p of [slackers[0], productive[0]]) {
+    p.tasks = [{ id: 'reheat', done: false }];
+    standAt(game, p, 'microwave');
+    game.handleInteract(p, 'microwave', now);
+    assert.equal(p.activeTask.minigame, 'microwave');
+  }
+  assert.equal(slackers[0].activeTask.puzzle.food, 'fish');
+  assert.notEqual(productive[0].activeTask.puzzle.food, 'fish');
 });
 
-test('chat: water cooler reaches workers and snitches, never Management', () => {
-  const { game, outbox, mgmt, snitches, workers } = startedGame(6, { snitches: 1 });
-  const [snitch] = snitches;
+test('tasks: must stay in range for the full duration', () => {
+  const { game, productive } = startedGame(4);
+  const p = productive[0];
+  p.tasks = [{ id: 'tps', done: false }];
+  const desk = game.office.getInteractable(p.deskId);
+  const seat = game.roles.seatOf(p);
+  p.x = seat.x; p.y = seat.y;
+  game.handleInteract(p, desk.id, DAY + 10);
+  assert.ok(p.activeTask);
+  p.x += 300;
+  game.tick(DAY + 20);
+  assert.equal(p.activeTask, null, 'walking away cancels');
+  p.x = seat.x;
+  game.handleInteract(p, desk.id, DAY + 100);
+  game.tick(DAY + 100 + taskVersion(TASKS_BY_ID.get('tps'), p.role).duration + 10);
+  assert.equal(p.tasks[0].done, true);
+});
+
+test('tasks: chance weights are respected and 0 means never', () => {
+  const catalogue = [
+    { id: 'a', target: 'x', chance: 9 },
+    { id: 'b', target: 'x', chance: 1 },
+    { id: 'off', target: 'x', chance: 0 },
+  ];
+  const ts = new TaskSystem(null, catalogue);
+  const counts = { a: 0, b: 0, off: 0 };
+  for (let i = 0; i < 4000; i++) { const p = {}; ts.reset(p); counts[ts.issueNext(p).id]++; }
+  assert.equal(counts.off, 0);
+  assert.ok(counts.a > counts.b * 5, JSON.stringify(counts));
+});
+
+test('tasks: handed out one per section; clock pauses during meetings', () => {
+  const { game, slackers, productive } = startedGame(4, { tasks: 4, workdayMinutes: 4 });
+  const section = 60_000;
+  const p = productive[0];
+  assert.equal(p.tasks.length, 1);
+  assert.equal(slackers[0].tasks.length, 0, 'slackers get no list');
+  game.tick(DAY + section + 10);
+  assert.equal(p.tasks.length, 2);
+  game.startMeeting(p, DAY + section + 100);
+  game.tick(DAY + section + 50_000);
+  game.endMeeting(DAY + section + 50_100);
+  game.tick(DAY + 2 * section + 10);
+  assert.equal(p.tasks.length, 2, 'paused time does not count');
+  game.tick(DAY + 2 * section + 50_100);
+  assert.equal(p.tasks.length, 3);
+});
+
+// ===========================================================================
+// Evidence
+// ===========================================================================
+
+test('evidence: fumes fade on their own; the whiteboard shows what was drawn', () => {
+  const { game, slackers, productive } = startedGame(4);
+  game.evidence.set('microwave', { kind: 'fish', objectId: 'microwave', at: DAY, until: DAY + EVIDENCE.fish.ttl, data: null });
+  game.tick(DAY + EVIDENCE.fish.ttl + 10);
+  assert.equal(game.evidence.has('microwave'), false);
+
+  // A slacker doodle stays until a productive drawing replaces it.
+  const s = slackers[0], p = productive[0];
+  for (const who of [s, p]) {
+    who.tasks = [{ id: 'whiteboard', done: false }];
+    standAt(game, who, 'whiteboard');
+  }
+  let now = DAY + 1000;
+  game.handleInteract(s, 'whiteboard', now);
+  const doodle = s.activeTask.puzzle.drawing;
+  // Trace it perfectly.
+  return import('../shared/minigames/whiteboard.js').then(({ DRAWINGS_BY_ID }) => {
+    const ink = (id) => DRAWINGS_BY_ID.get(id).strokes.map((st) => st.flatMap(([x, y]) => [Math.round(x), Math.round(y)]));
+    game.handleMinigame(s, { ink: ink(doodle) }, now + 5000);
+    assert.equal(game.roomState().evidence.find((e) => e.objectId === 'whiteboard').data.drawing, doodle);
+    now += 10_000;
+    game.handleInteract(p, 'whiteboard', now);
+    const chart = p.activeTask.puzzle.drawing;
+    game.handleMinigame(p, { ink: ink(chart) }, now + 5000);
+    assert.equal(game.evidence.has('whiteboard'), false);
+    assert.equal(game.roomState().whiteboard.drawing, chart);
+  });
+});
+
+// ===========================================================================
+// Meters and winning
+// ===========================================================================
+
+test('win: voting out the last slacker; tie ejects nobody', () => {
+  const { game, players, slackers } = startedGame(4);
+  let now = DAY + MEETING_COOLDOWN_MS + 10;
+  game.startMeeting(players[0], now);
+  // Tie first.
+  game.handleVote(players[0], players[1].id, now);
+  game.handleVote(players[1], players[0].id, now);
+  game.handleVote(players[2], 'skip', now);
+  game.handleVote(players[3], 'skip', now);
+  game.tick(now += 10);
+  game.tick(now += 10_000);
+  assert.equal(game.phase, PHASE.PLAYING);
+  assert.ok(players.every((p) => p.status === STATUS.ACTIVE));
+  // Now everyone votes the slacker out.
+  game.startMeeting(players[1], now += 60_000);
+  for (const p of players) game.handleVote(p, slackers[0].id, now);
+  game.tick(now += 10);
+  game.tick(now += 10_000);
+  assert.equal(game.phase, PHASE.ENDED);
+  assert.equal(game.result.winner, 'productive');
+  assert.deepEqual(game.result.slackers.map((s) => s.id), [slackers[0].id]);
+});
+
+test('win: slackers win once they match the productive employees', () => {
+  const { game, slackers, productive } = startedGame(4);
+  game.sendHome(productive[0]);
+  game.sendHome(productive[1]);
+  game.checkWin(DAY + 10);
+  assert.equal(game.result.winner, 'slackers');
+  void slackers;
+});
+
+// ===========================================================================
+// Chat, HR, emotes, sight, breaks, reconnect
+// ===========================================================================
+
+test('chat: water cooler is for everyone; the group chat is slackers only', () => {
+  const { game, outbox, slackers, productive } = startedGame(7, { slackers: 2 });
   const chatTo = () => outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.to).sort();
-
   outbox.length = 0;
-  game.handleChat(workers[0], 'Who rang the bell?', 'crew', 1);
-  assert.deepEqual(chatTo(), [...workers, snitch].map((p) => p.id).sort(), 'workers + snitch hear it');
-
-  // The snitch can post in both channels.
+  game.handleChat(productive[0], 'Who microwaved fish?', 'crew', 1);
+  assert.equal(chatTo().length, 7);
   outbox.length = 0;
-  game.handleChat(snitch, 'Not me!', 'crew', 1);
-  assert.ok(!chatTo().includes(mgmt.id));
-  assert.equal(chatTo().length, workers.length + 1);
+  game.handleChat(slackers[0], 'not me lol', 'team', 1);
+  assert.deepEqual(chatTo(), slackers.map((s) => s.id).sort());
   outbox.length = 0;
-  game.handleChat(snitch, 'They suspect Ana', 'team', 1);
-  assert.deepEqual(chatTo(), [mgmt.id, snitch.id].sort());
-
-  // Management can't post to (or read) the water cooler.
-  outbox.length = 0;
-  game.handleChat(mgmt, 'hello?', 'crew', 1);
+  game.handleChat(productive[0], 'let me in', 'team', 1);
   assert.equal(chatTo().length, 0);
-
-  // Reconnecting players get only the backlogs they're allowed to read.
-  outbox.length = 0;
-  game.sendFullState(mgmt, 1);
-  const mgmtChannels = outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort();
-  assert.deepEqual(mgmtChannels, ['all', 'team']);
-  outbox.length = 0;
-  game.sendFullState(snitch, 1);
-  assert.deepEqual(outbox.filter((m) => m.t === S2C.CHAT).map((m) => m.d.channel).sort(), ['all', 'crew', 'team']);
 });
 
-// ===========================================================================
-// Breaks and task windows
-// ===========================================================================
-import { breakWindows } from '../shared/breaks.js';
-
-test('breaks: schedule maps office time onto the workday', () => {
-  const w = breakWindows(3, 8 * 60_000); // 8-minute day: one office hour = one minute
-  assert.deepEqual(w.map((b) => b.id), ['coffee', 'lunch', 'afternoon']);
-  const lunch = w.find((b) => b.id === 'lunch');
-  assert.equal(lunch.startMs, 3 * 60_000);
-  assert.equal(lunch.endMs, 4 * 60_000);
-  assert.deepEqual(breakWindows(0, 1000), []);
-});
-
-test('breaks: safe in break areas, desk checks off, break tasks gated', () => {
-  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0, workdayMinutes: 8, breaks: 1 }); // lunch only
-  const t0 = 1_000_000 + START_FREEZE_MS;
-  const lunchAt = t0 + 3 * 60_000 + 10;
-  const w = workers[0];
-
-  // Before lunch: a break-only task waits for the break.
-  w.tasks = [{ id: 'lunch', done: false }];
-  const table = game.office.getInteractable('lunch_table');
-  w.x = table.x + table.w / 2; w.y = table.y + table.h + 20;
-  game.handleInteract(w, 'lunch_table', t0 + 1000);
-  assert.equal(w.activeTask, null);
-  assert.match(lastToast(outbox, w.id), /break/);
-
-  // Lunch starts: announced to everyone.
-  outbox.length = 0;
-  game.tick(lunchAt);
-  assert.ok(outbox.some((m) => m.t === S2C.EVENT && m.d.kind === 'break_start'));
-  game.handleInteract(w, 'lunch_table', lunchAt + 10);
-  assert.ok(w.activeTask, 'can eat lunch on the lunch break');
-
-  // On break in the break room: can't be reported. In the hallway: fair game.
-  mgmt.x = w.x + 40; mgmt.y = w.y;
-  game.handleReport(mgmt, w.id, lunchAt + 20);
-  assert.equal(w.status, STATUS.ACTIVE);
-  assert.match(lastToast(outbox, mgmt.id), /on break/);
-  const w2 = workers[1];
-  w2.x = 300; w2.y = 520; mgmt.x = 340; mgmt.y = 520;
-  game.handleReport(mgmt, w2.id, lunchAt + 30);
-  assert.equal(w2.status, STATUS.SENT_HOME);
-
-  // No desk checks during lunch.
-  mgmt.deskCheckReadyAt = 0;
-  game.handleDeskCheck(mgmt, lunchAt + 40);
-  assert.equal(game.deskCheck, null);
-});
-
-// ===========================================================================
-// HR complaints and emotes
-// ===========================================================================
-
-test('HR: right guess fires the snitch; wrong guess fires you; once per game', () => {
-  const { game, outbox, mgmt, snitches, workers } = startedGame(6, { snitches: 1 });
-  const now = 1_000_000 + START_FREEZE_MS + 10;
-  const box = game.office.getInteractable('hr_box');
-  const atBox = (p) => { p.x = box.x - 20; p.y = box.y + box.h / 2; };
-  const [a, b, c] = workers;
-
-  // Away from the box: refused.
+test('HR: right guess fires the slacker; wrong guess fires you; once per game', () => {
+  const { game, outbox, slackers, productive } = startedGame(6, { slackers: 1 });
+  const now = DAY + 10;
+  const [a, b, c] = productive;
   a.x = 300; a.y = 520;
-  game.handleHrReport(a, snitches[0].id, now);
-  assert.equal(snitches[0].status, STATUS.ACTIVE);
-
-  // Right guess.
-  atBox(a);
-  game.handleHrReport(a, snitches[0].id, now);
-  assert.equal(snitches[0].status, STATUS.SENT_HOME);
-  assert.ok(outbox.some((m) => m.t === S2C.EVENT && m.d.kind === 'hr' && m.d.outcome === 'snitch'));
-
-  // Only once.
+  game.handleHrReport(a, slackers[0].id, now);
+  assert.equal(slackers[0].status, STATUS.ACTIVE, 'must be at the HR box');
+  standAt(game, a, 'hr_box');
+  game.handleHrReport(a, slackers[0].id, now);
+  assert.equal(slackers[0].status, STATUS.SENT_HOME);
+  assert.ok(events(outbox, 'hr').some((e) => e.outcome === 'slacker'));
   game.handleHrReport(a, b.id, now);
-  assert.equal(b.status, STATUS.ACTIVE);
+  assert.equal(b.status, STATUS.ACTIVE, 'only once');
+  void c;
+});
 
-  // Wrong guess: the accuser is fired, not the accused.
-  atBox(c);
-  game.handleHrReport(c, b.id, now);
-  assert.equal(c.status, STATUS.SENT_HOME);
-  assert.equal(b.status, STATUS.ACTIVE);
-
-  // Management can't use it.
-  atBox(mgmt);
-  game.handleHrReport(mgmt, b.id, now);
+test('HR: a false complaint gets you fired', () => {
+  const { game, productive } = startedGame(6, { slackers: 1 });
+  const [a, b] = productive;
+  standAt(game, a, 'hr_box');
+  game.handleHrReport(a, b.id, DAY + 10);
+  assert.equal(a.status, STATUS.SENT_HOME);
   assert.equal(b.status, STATUS.ACTIVE);
 });
 
-test('emotes: only people who can see you get them; unknown emotes ignored', () => {
-  const { game, outbox, workers } = startedGame(4, { snitches: 0, sightRange: 300 });
-  game.tick(1_000_000 + START_FREEZE_MS + 10);
-  const [a, b, c] = workers;
+test('emotes: only people who can see you get them', () => {
+  const { game, outbox, players } = startedGame(4, { sightRange: 300 });
+  game.tick(DAY + 10);
+  const [a, b, c] = players;
   a.x = 300; a.y = 520; b.x = 400; b.y = 520; c.x = 1500; c.y = 520;
   outbox.length = 0;
   game.handleEmote(a, 'lol');
   const to = outbox.filter((m) => m.t === S2C.EMOTE).map((m) => m.to);
-  assert.ok(to.includes(a.id) && to.includes(b.id));
-  assert.ok(!to.includes(c.id), 'too far away to see it');
+  assert.ok(to.includes(a.id) && to.includes(b.id) && !to.includes(c.id));
   outbox.length = 0;
   game.handleEmote(a, '<script>');
   assert.equal(outbox.length, 0);
 });
 
-test('line of sight: walls hide players and block firing; doorways do not', () => {
-  const { game, outbox, mgmt, workers } = startedGame(4, { snitches: 0, sightRange: 600 });
-  const now = 1_000_000 + START_FREEZE_MS + REPORT_INITIAL_COOLDOWN_MS + 10;
-  const [a, b] = workers;
-  // a is inside Open Office A, b is in the hallway right below its south wall (not at the door).
-  a.x = 100; a.y = 380; b.x = 100; b.y = 520;
+test('sight: range and walls limit who you receive', () => {
+  const { game, outbox, players } = startedGame(4, { sightRange: 600 });
+  const [a, b] = players;
+  a.x = 100; a.y = 380; b.x = 100; b.y = 520; // wall between
   outbox.length = 0;
-  game.tick(now);
+  game.tick(DAY + 10);
   const seen = (p) => outbox.filter((m) => m.to === p.id && m.t === S2C.SNAPSHOT).pop().d.p.map((e) => e[0]);
-  assert.ok(!seen(a).includes(b.id), 'wall in the way');
-  // Move b in line with the doorway: visible.
-  b.x = 300;
-  a.x = 300;
+  assert.ok(!seen(a).includes(b.id));
+  a.x = 300; b.x = 300; // in line with the doorway
+  players[2].x = 1500; players[2].y = 520;
+  players[3].x = 2700; players[3].y = 1900;
   outbox.length = 0;
-  game.tick(now + 50);
-  assert.ok(seen(a).includes(b.id), 'seen through the door');
+  game.tick(DAY + 60);
+  assert.ok(seen(a).includes(b.id));
+  assert.ok(!seen(a).includes(players[2].id), 'too far');
+  // Fired: watch everyone.
+  game.sendHome(a);
+  outbox.length = 0;
+  game.tick(DAY + 120);
+  assert.equal(seen(a).length, 3);
+});
 
-  // Management on the other side of the wall can't fire them, even in range.
-  mgmt.x = 100; mgmt.y = 520; b.x = 60; b.y = 410;
-  game.handleReport(mgmt, b.id, now + 100);
-  assert.equal(b.status, STATUS.ACTIVE);
+test('breaks: schedule maps office time; break tasks wait for a break', () => {
+  const w = breakWindows(3, 8 * 60_000);
+  assert.deepEqual(w.map((b) => b.id), ['coffee', 'lunch', 'afternoon']);
+  assert.equal(w.find((b) => b.id === 'lunch').startMs, 3 * 60_000);
+
+  const { game, outbox, productive } = startedGame(4, { workdayMinutes: 8, breaks: 1 });
+  const p = productive[0];
+  p.tasks = [{ id: 'lunch', done: false }];
+  standAt(game, p, 'lunch_table');
+  game.handleInteract(p, 'lunch_table', DAY + 1000);
+  assert.equal(p.activeTask, null);
+  assert.match(lastToast(outbox, p.id), /break/);
+  outbox.length = 0;
+  game.tick(DAY + 3 * 60_000 + 10);
+  assert.equal(events(outbox, 'break_start').length, 1);
+  game.handleInteract(p, 'lunch_table', DAY + 3 * 60_000 + 20);
+  assert.ok(p.activeTask);
+});
+
+test('reconnect: token resumes the same player mid-game; strangers cannot join', () => {
+  const { game, players } = startedGame(4);
+  const p = players[1];
+  game.onDisconnect(p.id, DAY);
+  const back = game.join('whatever', p.token, DAY + 1000);
+  assert.equal(back.player, p);
+  assert.equal(back.resumed, true);
+  assert.equal(game.join('Stranger', null, DAY).error.code, 'in_progress');
+});
+
+test('interactions: no using things through walls', () => {
+  const { game, players } = startedGame(4);
+  const p = players[0];
+  p.tasks = [{ id: 'bathroom', done: false }, { id: 'clog', done: false }];
+  const toilet = game.office.getInteractable('toilet_2');
+  // On the lawn, just outside the restroom's outer wall: close, but a wall in the way.
+  p.x = toilet.x + toilet.w / 2; p.y = 1496;
+  assert.ok(distPointRect(p.x, p.y, toilet) < 46, 'within arm\u2019s reach on paper');
+  game.handleInteract(p, 'toilet_2', DAY + 10);
+  assert.equal(p.activeTask, null);
+  // From inside the stall: fine.
+  p.y = toilet.y - 18;
+  game.handleInteract(p, 'toilet_2', DAY + 20);
+  assert.ok(p.activeTask);
+});
+
+test('whiteboard: watched live by whoever can see it; the drawing stays up for everyone', async () => {
+  const { DRAWINGS_BY_ID } = await import('../shared/minigames/whiteboard.js');
+  const { game, outbox, players } = startedGame(4, { sightRange: 900 });
+  const [artist, watcher, outsider] = players;
+  artist.tasks = [{ id: 'whiteboard', done: false }];
+  standAt(game, artist, 'whiteboard');
+  watcher.x = 970; watcher.y = 400;              // in the Conference Room, facing the board
+  outsider.x = 300; outsider.y = 200;            // in Open Office A, walls in the way
+  let now = DAY + 10;
+  game.handleInteract(artist, 'whiteboard', now);
+  const strokes = DRAWINGS_BY_ID.get(artist.activeTask.puzzle.drawing).strokes;
+  const ink = strokes.map((st) => st.flatMap(([x, y]) => [x, y]));
+  outbox.length = 0;
+  game.handleWhiteboardInk(artist, ink.slice(0, 2), now + 500);
+  const liveTo = outbox.filter((m) => m.t === S2C.BOARD && m.d.live).map((m) => m.to);
+  assert.ok(liveTo.includes(watcher.id), 'watcher sees it being drawn');
+  assert.ok(!liveTo.includes(outsider.id), 'no peeking through walls');
+
+  outbox.length = 0;
+  game.handleMinigame(artist, { ink }, now + 5000);
+  const final = outbox.find((m) => m.t === S2C.BOARD && m.d.final);
+  assert.equal(final.to, '*', 'the finished drawing goes to everyone');
+  assert.equal(final.d.final.drawing, game.board.drawing);
+  assert.ok(final.d.final.ink.length >= strokes.length - 1);
+});
+
+
+// ===========================================================================
+// Microwaves, shenanigans, sick days, pranks, and the end of the day
+// ===========================================================================
+
+/** Do a task window properly (answers built from the puzzle the server made). */
+function solve(game, p, now) {
+  const a = p.activeTask;
+  const answers = {
+    microwave: () => ({ inside: true, code: a.puzzle.code }),
+    cooler: () => (a.puzzle.variant === 'slacker' ? { lidOff: true, poured: true, lidOn: true } : { level: 0.8, drank: true }),
+    prank: () => ({ woke: true, opened: true, content: 'memes', wallpaper: true }),
+  };
+  game.handleMinigame(p, answers[a.minigame](), now);
+}
+
+test('microwave: it really runs; open it after the ding to finish; busy for others', () => {
+  const { game, outbox, productive } = startedGame(4);
+  const [a, b] = productive;
+  let now = DAY + 10;
+  for (const p of [a, b]) { p.tasks = [{ id: 'reheat', done: false }]; standAt(game, p, 'microwave'); }
+  game.handleInteract(a, 'microwave', now);
+  const secs = Number(a.activeTask.puzzle.code);
+  assert.ok(secs >= 15 && secs <= 45, 'sensible times');
+  solve(game, a, now += 3000);
+  assert.equal(a.tasks[0].done, false, 'not done just by starting it');
+  assert.equal(game.roomState().microwaves[0].state, 'running');
+  game.handleInteract(b, 'microwave', now += 100);
+  assert.equal(b.activeTask, null, 'someone else is using it');
+  assert.match(lastToast(outbox, b.id), /other microwave/);
+  game.handleInteract(a, 'microwave', now += 100);
+  assert.equal(a.tasks[0].done, false, 'still heating');
+  game.tick(now += secs * 1000);
+  assert.equal(game.roomState().microwaves[0].state, 'done');
+  game.handleInteract(a, 'microwave', now += 100);
+  assert.equal(a.tasks[0].done, true, 'opened it');
+  assert.equal(game.roomState().microwaves.length, 0);
+});
+
+test('slackers: no task list; shenanigans any time with a cooldown; fish stinks when it dings', () => {
+  const { game, outbox, slackers, productive } = startedGame(4, { shenaniganCooldown: 90 });
+  const s = slackers[0], p = productive[0];
+  assert.equal(s.tasks.length, 0, 'slackers get no to-do list');
+  let now = DAY + 10;
+  standAt(game, s, 'microwave');
+  game.handleInteract(s, 'microwave', now);
+  assert.equal(s.activeTask.puzzle.food, 'fish');
+  solve(game, s, now += 3000);
+  assert.equal(game.chaosToday, CHAOS.PER_SHENANIGAN);
+  assert.equal(game.evidence.has('microwave'), false, 'no smell yet: still running');
+  game.tick(now += 30_000);
+  assert.ok(game.evidence.has('microwave'), 'ding: fumes');
+  game.tick(now += EVIDENCE.fish.delay + 10);
+  assert.ok(events(outbox, 'evidence').some((e) => /fish/.test(e.text)));
+  // Cooldown before the next one.
+  standAt(game, s, 'microwave_2');
+  game.handleInteract(s, 'microwave_2', now += 100);
+  assert.equal(s.activeTask, null);
+  assert.match(lastToast(outbox, s.id), /Lie low/);
+  // A productive employee opens it: fish out, fumes gone.
+  standAt(game, p, 'microwave');
+  game.handleInteract(p, 'microwave', now += 100);
+  assert.equal(game.evidence.has('microwave'), false);
+  assert.ok(events(outbox, 'cleaned').length >= 1);
+});
+
+test('water cooler: spiked tank makes the next drinker sick until tomorrow', () => {
+  const { game, outbox, slackers, productive } = startedGame(5, { workdayMinutes: 3 });
+  const s = slackers[0], p = productive[0];
+  let now = DAY + 10;
+  standAt(game, s, 'cooler_mid');
+  game.handleInteract(s, 'cooler_mid', now);
+  assert.equal(s.activeTask.minigame, 'cooler');
+  solve(game, s, now += 2000);
+  assert.ok(game.spiked.has('cooler_mid'));
+  p.tasks = [{ id: 'water', done: false }];
+  standAt(game, p, 'cooler_mid');
+  game.handleInteract(p, 'cooler_mid', now += 100);
+  solve(game, p, now += 2000);
+  assert.equal(p.tasks[0].done, true);
+  assert.equal(p.status, STATUS.SICK);
+  assert.ok(events(outbox, 'sick').length === 1);
+  assert.equal(game.spiked.has('cooler_mid'), false, 'one dose');
+  // End of day (no vote needed if we fake a good day), then the next day: back at work.
+  game.match.target = 30;
+  for (const q of productive) if (q !== p) q.tasks = [{ id: 'tps', done: true }, { id: 'x', done: true }, { id: 'y', done: true }];
+  game.tick(DAY + 3 * 60_000 + 10);
+  assert.equal(game.meetings.current.kind, 'eod');
+  game.tick(DAY + 3 * 60_000 + 20_000);
+  game.tick(DAY + 3 * 60_000 + 40_000);
+  assert.equal(game.dayNumber, 2);
+  assert.equal(p.status, STATUS.ACTIVE, 'feeling better');
+});
+
+test('prank: a coworker\u2019s screen; IT fires them at 5 PM; once per day', () => {
+  const { game, slackers, productive } = startedGame(6, { slackers: 1, workdayMinutes: 3 });
+  const s = slackers[0], victim = productive[0];
+  let now = DAY + 10;
+  standAt(game, s, victim.deskId);
+  game.handleInteract(s, victim.deskId, now);
+  assert.equal(s.activeTask.minigame, 'prank');
+  solve(game, s, now += 3000);
+  assert.ok(game.evidence.get(victim.deskId)?.kind === 'screen', 'anyone walking past can see it');
+  // A second prank today: refused.
+  const other = productive[1];
+  s.shenaniganReadyAt = 0;
+  standAt(game, s, other.deskId);
+  game.handleInteract(s, other.deskId, now += 100);
+  assert.equal(s.activeTask, null);
+  game.tick(DAY + 3 * 60_000 + 10);
+  const report = game.meetings.current.report;
+  assert.deepEqual(report.itFired.map((f) => f.id), [victim.id]);
+  assert.equal(victim.status, STATUS.SENT_HOME);
+});
+
+test('end of day: below target, management makes you fire someone (no skipping)', () => {
+  const { game, players, slackers } = startedGame(5, { workdayMinutes: 3, days: 3, target: 60 });
+  let now = DAY + 3 * 60_000 + 10;
+  game.tick(now);                                 // 5 PM: nothing got done, so 0%
+  const m = game.meetings.current;
+  assert.equal(m.kind, 'eod');
+  assert.equal(m.voteNeeded, true);
+  assert.equal(m.stage, 'report');
+  game.tick(now += 10_000);
+  assert.equal(game.meetings.current.stage, 'discussing');
+  game.handleVote(players[0], 'skip', now);
+  assert.equal(game.meetings.current.votes.size, 0, 'no skipping');
+  for (const p of players) if (p.isActive) game.handleVote(p, slackers[0].id, now);
+  game.tick(now += 10);
+  game.tick(now += 10_000);
+  assert.equal(game.result?.winner, 'productive', 'they fired the slacker');
+});
+
+test('end of day: on target means no vote; surviving the last day wins it for the slackers', () => {
+  const { game, productive } = startedGame(4, { workdayMinutes: 3, days: 2, target: 30 });
+  let now = DAY;
+  for (let day = 1; day <= 2; day++) {
+    for (const p of productive) p.tasks = Array.from({ length: game.match.tasks }, (_, i) => ({ id: `t${i}`, done: true }));
+    game.tick(now += 3 * 60_000 + 10);
+    assert.equal(game.meetings.current.voteNeeded, false, `day ${day} hit the target`);
+    game.tick(now += 10_000);
+    game.tick(now += 10_000);
+    if (day === 1) {
+      assert.equal(game.dayNumber, 2);
+      now = game.day.startAt;
+    }
+  }
+  assert.equal(game.result.winner, 'slackers', 'still on the payroll at the end of the week');
 });

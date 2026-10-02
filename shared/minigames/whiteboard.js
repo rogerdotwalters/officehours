@@ -1,6 +1,7 @@
 /**
- * Whiteboard: trace a ridiculous drawing. The drawing is shown as grey dotted
- * lines; draw over it with the marker.
+ * Whiteboard: trace a drawing. It's shown as grey dotted lines; draw over it with the marker.
+ *   productive: charts and inspirational quotes
+ *   slacker:    something unprofessional (but PG), which stays up for everyone to see
  *
  * Scoring (same code in the browser for the progress bar and on the server to
  * check the answer):
@@ -8,6 +9,7 @@
  *   every part: each stroke (an eye, the tie, the arrow) is at least mostly traced
  *   accuracy: how much of your ink stayed near the outline (no scribbling it out)
  *
+ * `scrawl` is the short version shown on the whiteboard in the office afterwards.
  * Drawings live on a 160 x 100 board. Each one is a list of strokes, each stroke
  * a list of [x, y] points, built from the little shape helpers below. `labels`
  * are printed text that doesn't need tracing. Add your own drawings to DRAWINGS.
@@ -51,11 +53,94 @@ function squiggle(x, y0, y1, amp = 3, waves = 2, n = 16) {
   return pts;
 }
 
+// A tiny stroke font so words can be traced. Glyphs live in a 6 x 10 box.
+const GLYPHS = {
+  A: [[[0, 10], [3, 0], [6, 10]], [[1.2, 6], [4.8, 6]]],
+  B: [[[0, 10], [0, 0], [4, 0], [5.5, 1.5], [5.5, 3.5], [4, 5], [0, 5]], [[4, 5], [6, 6.5], [6, 8.5], [4.5, 10], [0, 10]]],
+  C: [[[6, 1.5], [4.5, 0], [1.5, 0], [0, 2], [0, 8], [1.5, 10], [4.5, 10], [6, 8.5]]],
+  E: [[[6, 0], [0, 0], [0, 10], [6, 10]], [[0, 5], [4.5, 5]]],
+  I: [[[3, 0], [3, 10]], [[1, 0], [5, 0]], [[1, 10], [5, 10]]],
+  K: [[[0, 0], [0, 10]], [[6, 0], [0, 6]], [[2, 4.5], [6, 10]]],
+  M: [[[0, 10], [0, 0], [3, 5], [6, 0], [6, 10]]],
+  N: [[[0, 10], [0, 0], [6, 10], [6, 0]]],
+  O: [[[1.5, 0], [4.5, 0], [6, 2], [6, 8], [4.5, 10], [1.5, 10], [0, 8], [0, 2], [1.5, 0]]],
+  P: [[[0, 10], [0, 0], [4.5, 0], [6, 1.5], [6, 3.5], [4.5, 5], [0, 5]]],
+  R: [[[0, 10], [0, 0], [4.5, 0], [6, 1.5], [6, 3.5], [4.5, 5], [0, 5]], [[3, 5], [6, 10]]],
+  S: [[[6, 1.5], [4.5, 0], [1.5, 0], [0, 1.5], [0, 3.5], [1.5, 5], [4.5, 5], [6, 6.5], [6, 8.5], [4.5, 10], [1.5, 10], [0, 8.5]]],
+  T: [[[0, 0], [6, 0]], [[3, 0], [3, 10]]],
+  U: [[[0, 0], [0, 8], [1.5, 10], [4.5, 10], [6, 8], [6, 0]]],
+  W: [[[0, 0], [1.5, 10], [3, 4], [4.5, 10], [6, 0]]],
+  Z: [[[0, 0], [6, 0], [0, 10], [6, 10]]],
+};
+/** Strokes for a word, top-left at (x, y), each letter `k` times the 6 x 10 box. */
+function text(str, x, y, k) {
+  const out = [];
+  let cx = x;
+  for (const ch of str) {
+    if (ch === ' ') { cx += 5 * k; continue; }
+    for (const g of GLYPHS[ch] ?? []) out.push(g.map(([gx, gy]) => [cx + gx * k, y + gy * k]));
+    cx += 8.5 * k;
+  }
+  return out;
+}
+const textWidth = (str, k) => [...str].reduce((w, ch) => w + (ch === ' ' ? 5 : 8.5) * k, 0) - 2.5 * k;
+const centred = (str, y, k) => text(str, (BOARD_W - textWidth(str, k)) / 2, y, k);
+
 export const DRAWINGS = [
+  // ---- Productive: charts and inspiration ----
   {
-    id: 'potato',
-    title: 'Bob from Accounting, as a potato',
-    caption: 'Very accurate. Do not show Bob.',
+    id: 'q3_chart', scrawl: 'Q3: UP 4%', variant: 'productive',
+    title: 'Q3 results', caption: 'Up and to the right. As it should be.',
+    strokes: [
+      line([22, 12], [22, 86], [146, 86]),
+      rect(34, 66, 18, 20), rect(60, 54, 18, 32), rect(86, 40, 18, 46), rect(112, 24, 18, 62),
+      line([36, 58], [66, 46], [92, 32], [124, 14]),
+      line([116, 14], [124, 14], [123, 22]),
+    ],
+    labels: [{ x: 43, y: 94, text: 'Q1', size: 5 }, { x: 69, y: 94, text: 'Q2', size: 5 }, { x: 95, y: 94, text: 'Q3', size: 5 }, { x: 121, y: 94, text: 'Q4', size: 5 }],
+  },
+  {
+    id: 'teamwork', scrawl: 'TEAMWORK!', variant: 'productive',
+    title: 'Inspirational quote', caption: 'Teamwork makes the dream work.',
+    strokes: [
+      ...centred('TEAMWORK', 26, 1.6),
+      line([30, 58], [60, 64], [100, 64], [130, 58]),
+    ],
+    labels: [{ x: 80, y: 76, text: 'makes the dream work', size: 7 }],
+  },
+  {
+    id: 'pie', scrawl: 'WE: 61%', variant: 'productive',
+    title: 'Market share', caption: 'We are the big slice.',
+    strokes: [
+      circle(64, 50, 32, 40),
+      line([64, 50], [64, 18]), line([64, 50], [94, 62]), line([64, 50], [40, 72]),
+    ],
+    labels: [{ x: 120, y: 30, text: 'US: 61%', size: 7 }, { x: 120, y: 46, text: 'THEM: 27%', size: 7 }, { x: 120, y: 62, text: 'GARY: 12%', size: 7 }],
+  },
+  {
+    id: 'strategy', scrawl: 'LINE GO UP', variant: 'productive',
+    title: 'Growth strategy', caption: 'Line go up.',
+    strokes: [
+      line([20, 12], [20, 86], [146, 86]),
+      line([26, 78], [44, 64], [60, 72], [80, 50], [95, 58], [114, 30], [128, 38], [140, 12]),
+      line([131, 15], [140, 12], [141, 21]),
+    ],
+    labels: [{ x: 96, y: 18, text: 'PROFIT', size: 7 }],
+  },
+
+  // ---- Slacker: unprofessional, but PG ----
+  {
+    id: 'boss_sucks', scrawl: 'BOSS SUCKS', variant: 'slacker',
+    title: 'A bold statement', caption: 'Brave. Anonymous. Probably.',
+    strokes: [
+      ...centred('BOSS', 14, 2.0),
+      ...centred('SUCKS', 52, 2.0),
+    ],
+    labels: [],
+  },
+  {
+    id: 'potato', scrawl: 'BOSS = POTATO', variant: 'slacker',
+    title: 'The boss, as a potato', caption: 'Very accurate. Do not show the boss.',
     strokes: [
       ellipse(80, 50, 42, 30, 0.06),
       circle(66, 44, 4, 14), circle(94, 44, 4, 14),
@@ -65,36 +150,17 @@ export const DRAWINGS = [
     labels: [],
   },
   {
-    id: 'strategy',
-    title: 'Q3 strategy',
-    caption: 'Line go up. Questions?',
+    id: 'nap_time', scrawl: 'NAP TIME 2-5PM', variant: 'slacker',
+    title: 'New company policy', caption: 'Effective immediately.',
     strokes: [
-      line([20, 12], [20, 86], [146, 86]),
-      line([26, 78], [44, 64], [60, 72], [80, 50], [95, 58], [114, 30], [128, 38], [140, 12]),
-      line([131, 15], [140, 12], [141, 21]),
+      ...centred('NAP TIME', 20, 1.7),
+      ...text('Z', 108, 64, 1.1), ...text('Z', 122, 56, 1.4), ...text('Z', 140, 46, 1.8),
     ],
-    labels: [{ x: 96, y: 18, text: 'PROFIT???', size: 7 }],
+    labels: [{ x: 60, y: 76, text: 'mandatory, 2pm to 5pm', size: 7 }],
   },
   {
-    id: 'cat_ceo',
-    title: 'Our new CEO',
-    caption: 'He has been very decisive about naps.',
-    strokes: [
-      circle(80, 45, 25, 32),
-      line([60, 30], [57, 8], [74, 21]),
-      line([86, 21], [103, 8], [100, 30]),
-      circle(70, 42, 3.5, 12), circle(90, 42, 3.5, 12),
-      line([77, 52], [83, 52], [80, 56], [77, 52]),
-      line([62, 54], [42, 50]), line([62, 58], [42, 63]),
-      line([98, 54], [118, 50]), line([98, 58], [118, 63]),
-      line([80, 70], [73, 77], [80, 97], [87, 77], [80, 70]),
-    ],
-    labels: [],
-  },
-  {
-    id: 'org_chart',
-    title: 'Org chart',
-    caption: 'Drawn by Gary.',
+    id: 'org_chart', scrawl: 'GARY GARY GARY', variant: 'slacker',
+    title: 'Org chart', caption: 'Drawn by Gary.',
     strokes: [
       rect(65, 8, 30, 15),
       line([80, 23], [80, 34]), line([35, 34], [125, 34]),
@@ -109,23 +175,8 @@ export const DRAWINGS = [
     ],
   },
   {
-    id: 'coffee_feelings',
-    title: 'The coffee machine\u2019s feelings',
-    caption: 'It\u2019s been a long week for it too.',
-    strokes: [
-      line([52, 32], [100, 32], [96, 86], [56, 86], [52, 32]),
-      arc(100, 58, 13, -80, 80),
-      circle(67, 50, 3, 12), circle(85, 50, 3, 12),
-      arc(76, 76, 9, 200, 340),
-      circle(63, 60, 2.5, 10),
-      squiggle(62, 26, 8), squiggle(76, 26, 6), squiggle(90, 26, 8),
-    ],
-    labels: [],
-  },
-  {
-    id: 'evacuation',
-    title: 'Fire evacuation plan',
-    caption: 'Snacks first. Then people.',
+    id: 'evacuation', scrawl: 'SNACKS FIRST', variant: 'slacker',
+    title: 'Fire evacuation plan', caption: 'Snacks first. Then people.',
     strokes: [
       circle(40, 33, 7, 18),
       line([40, 40], [40, 64]),
@@ -216,8 +267,9 @@ export function scoreDrawing(drawing, strokes, samples = samplePoints(drawing)) 
   };
 }
 
-export function generateWhiteboard(rand) {
-  return { drawing: DRAWINGS[Math.floor(rand() * DRAWINGS.length)].id };
+export function generateWhiteboard(rand, variant = 'productive') {
+  const list = DRAWINGS.filter((d) => d.variant === (variant === 'slacker' ? 'slacker' : 'productive'));
+  return { variant, drawing: list[Math.floor(rand() * list.length)].id };
 }
 
 export function checkWhiteboard(puzzle, answer) {

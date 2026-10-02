@@ -21,6 +21,8 @@
  *  interactables[] Task targets and other usable objects. `type` links them to tasks
  *                  (see tasks.js). Several objects may share a type (e.g. two coolers).
  *  decor[]         Visual-only props. Set solid:true to make them block movement.
+ *                  wall:true mounts a prop on the back wall right above it (posters,
+ *                  clocks); give it the y of the wall's bottom edge.
  *  meetingSeats[]  Where active players are placed when a meeting is called.
  *
  * Nothing here is trusted from the client: the server builds the same map from this
@@ -95,6 +97,7 @@ export const OFFICE = {
     // Break room
     { id: 'coffee',       type: 'coffee_machine', label: 'Coffee machine',    x: 24,   y: 620,  w: 60,  h: 44,  solid: true },
     { id: 'microwave',    type: 'microwave',      label: 'Microwave',         x: 110,  y: 620,  w: 56,  h: 40,  solid: true },
+    { id: 'microwave_2',  type: 'microwave',      label: 'Microwave',         x: 176,  y: 620,  w: 56,  h: 40,  solid: true },
     { id: 'fridge',       type: 'fridge',         label: 'Fridge',            x: 500,  y: 620,  w: 60,  h: 70,  solid: true },
     { id: 'lunch_table',  type: 'lunch_table',    label: 'Lunch table',       x: 200,  y: 790,  w: 200, h: 90,  solid: true },
     // Restrooms
@@ -108,7 +111,8 @@ export const OFFICE = {
     { id: 'hr_box',       type: 'hr_box',         label: 'HR complaint box',  x: 1120, y: 760,  w: 44,  h: 54,  solid: true },
     // Conference room: the all-hands bell sits on the table edge
     { id: 'bell',         type: 'meeting_bell',   label: 'All-hands bell',    x: 955,  y: 286,  w: 30,  h: 24,  solid: false },
-    { id: 'whiteboard',   type: 'whiteboard',     label: 'Whiteboard',        x: 850,  y: 14,   w: 240, h: 18,  solid: false },
+    // Mounted on the back wall (drawn on the wall's face); the strip below is where you stand.
+    { id: 'whiteboard',   type: 'whiteboard',     label: 'Whiteboard',        x: 850,  y: 14,   w: 240, h: 18,  solid: false, wall: true },
     // Design studio
     { id: 'easel',        type: 'easel',          label: 'Easel',             x: 2620, y: 230,  w: 70,  h: 60,  solid: true },
     // Accounting
@@ -132,6 +136,14 @@ export const OFFICE = {
   ],
 
   decor: [
+    // On the back walls
+    { kind: 'poster', text: 'HANG IN THERE', x: 190, y: 12, w: 80, h: 1, wall: true },
+    { kind: 'poster', text: 'SYNERGY', x: 1480, y: 12, w: 80, h: 1, wall: true, color: '#3a6fd8' },
+    { kind: 'poster', text: 'GOOD VIBES', x: 2560, y: 12, w: 90, h: 1, wall: true, color: '#e56aa8' },
+    { kind: 'poster', text: 'WASH YOUR DISHES', x: 372, y: 612, w: 100, h: 1, wall: true, color: '#cf3b31' },
+    { kind: 'clock', x: 1460, y: 612, w: 40, h: 1, wall: true },
+    { kind: 'clock', x: 760, y: 612, w: 40, h: 1, wall: true },
+    { kind: 'poster', text: 'THE BOSS', x: 2520, y: 612, w: 70, h: 1, wall: true, color: '#8a5a3c' },
     // Office A
     { kind: 'plant',      x: 540,  y: 380, w: 34, h: 34, solid: true },
     { kind: 'bookshelf',  x: 520,  y: 30,  w: 50, h: 100, solid: true },

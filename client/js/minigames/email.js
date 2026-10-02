@@ -6,8 +6,10 @@ import { el } from './kit.js';
 
 export function mountEmail(root, puzzle, { submit }) {
   const inbox = puzzle.emails.map((m) => ({ ...m }));
+  const slacker = puzzle.variant === 'slacker';
+  const ACTION = slacker ? 'Forward to All Staff' : 'Reply';
   const opened = new Set();
-  const deleted = new Set();
+  const deleted = new Set();   // handled: replied to, or forwarded
   let current = null;
   let sent = false;
 
@@ -29,7 +31,7 @@ export function mountEmail(root, puzzle, { submit }) {
     render();
     if (deleted.size === inbox.length && !sent) {
       sent = true;
-      submit({ opened: [...opened], deleted: [...deleted] });
+      submit({ opened: [...opened], handled: [...deleted] });
       setTimeout(() => { sent = false; }, 1500);
     }
   }
@@ -42,19 +44,19 @@ export function mountEmail(root, puzzle, { submit }) {
         class: `em-row ${opened.has(m.id) ? '' : 'is-unread'} ${current?.id === m.id ? 'is-current' : ''}`,
         onclick: () => open(m),
       }, el('b', {}, m.from), el('span', {}, m.subject)))));
-    if (!left.length) list.append(el('li', { class: 'em-empty' }, 'Inbox zero. Treat yourself.'));
+    if (!left.length) list.append(el('li', { class: 'em-empty' }, slacker ? 'Sent to everyone. Every single person.' : 'Inbox zero. Treat yourself.'));
     app.classList.toggle('is-reading', !!current);
     pane.replaceChildren(...(current
       ? [
         el('div', { class: 'em-toolbar' },
           el('button', { type: 'button', class: 'btn btn--small em-back', onclick: () => { current = null; render(); } }, 'Back'),
-          el('button', { type: 'button', class: 'btn btn--small em-delete', onclick: () => remove(current) }, 'Delete')),
+          el('button', { type: 'button', class: `btn btn--small em-delete ${slacker ? '' : 'em-reply'}`, onclick: () => remove(current) }, ACTION)),
         el('h3', { class: 'em-subject' }, current.subject),
         el('p', { class: 'em-from' }, `From: ${current.from}`),
         el('p', { class: 'em-body' }, current.body),
       ]
       : [el('p', { class: 'em-placeholder' }, left.length ? 'Pick an email to read it.' : 'All done.')]));
-    status.textContent = `${left.length} left. Open each one, read it, then delete it.`;
+    status.textContent = `${left.length} left. Open each one, then ${slacker ? 'forward it to All Staff' : 'reply'}.`;
   }
   render();
   return { destroy() { root.replaceChildren(); } };

@@ -19,18 +19,23 @@ import { mountCopier } from './copier.js';
 import { mountWhiteboard } from './whiteboard.js';
 import { mountToilet } from './toilet.js';
 import { mountCoffee } from './coffee.js';
-import { TASKS_BY_ID } from '../../shared/tasks.js';
+import { mountCooler } from './cooler.js';
+import { mountPrank } from './prank.js';
+import { TASKS_BY_ID, taskVersion } from '../../shared/tasks.js';
 
+// sub: [productive subtitle, slacker subtitle]
 const UIS = {
-  fridge:    { mount: mountFridge,    sub: 'It\u2019s packed. Rearrange your coworkers\u2019 food until yours fits. They\u2019ll never know.' },
-  microwave: { mount: mountMicrowave, sub: 'Fish goes in, time from the sticky note, Start. The whole floor will smell it.' },
-  catfood:   { mount: mountCatfood,   sub: 'Scoop food from the can into Mittens\u2019 bowl. Mittens is the real boss.' },
-  email:     { mount: mountEmail,     sub: 'Open every chain email, read it, and delete it. Do not forward.' },
-  recycling: { mount: mountRecycling, sub: 'Everything in the box goes in the bin.' },
-  copier:    { mount: mountCopier,    sub: 'Copy every document in the stack. Don\u2019t read them. (Read them.)' },
-  whiteboard:{ mount: mountWhiteboard, sub: 'Trace the dotted lines. Nobody will know it was you.' },
-  toilet:    { mount: mountToilet,    sub: 'Everything goes in. Then flush. Then leave very quickly.' },
-  coffee:    { mount: mountCoffee,    sub: 'Follow the recipe on the sticky note. Exactly. Then Brew.' },
+  fridge:     { mount: mountFridge,     sub: ['It\u2019s packed. Rearrange your coworkers\u2019 food until your lunch fits, then close the door.', 'Find the right lunch, drag it out, eat it. Leave no trace.'] },
+  microwave:  { mount: mountMicrowave,  sub: ['Food in, time from the sticky note, Start. Then come back when it dings.', 'Fish in. Way too long. Start. Then walk away.'] },
+  catfood:    { mount: mountCatfood,    sub: ['Scoop food from the can into Mittens\u2019 bowl.', 'Mittens deserves more. Much, much more.'] },
+  email:      { mount: mountEmail,      sub: ['Open each work email and reply.', 'Open every chain email and forward it to All Staff.'] },
+  recycling:  { mount: mountRecycling,  sub: ['Everything in the box goes in the blue bin.', 'Bins are for quitters. The parking lot is right there.'] },
+  copier:     { mount: mountCopier,     sub: ['Copy every document in the stack.', 'Copy every document in the stack. Don\u2019t read them. (Read them.)'] },
+  whiteboard: { mount: mountWhiteboard, sub: ['Trace the dotted lines. Make the team proud.', 'Trace the dotted lines. Nobody will know it was you.'] },
+  toilet:     { mount: mountToilet,     sub: ['Stock the holder with fresh rolls.', 'Everything goes in. Then flush. Then leave very quickly.'] },
+  cooler:     { mount: mountCooler,     sub: ['Fill the cup to the lines. Not over.', 'Nobody will suspect the water cooler.'] },
+  prank:      { mount: mountPrank,      sub: ['', 'Their computer, your masterpiece. IT will find it at 5 PM.'] },
+  coffee:     { mount: mountCoffee,     sub: ['Follow the recipe on the sticky note, then Brew.', 'There\u2019s one cup left. It\u2019s yours now.'] },
 };
 
 export class TaskWindow {
@@ -62,10 +67,14 @@ export class TaskWindow {
     if (key === this.key) return;
     this.close();
     this.key = key;
-    document.getElementById('taskwin-title').textContent = TASKS_BY_ID.get(a.taskId)?.label ?? 'Task';
-    document.getElementById('taskwin-sub').textContent = ui.sub;
+    const def = TASKS_BY_ID.get(a.taskId);
+    const slacker = a.puzzle?.variant === 'slacker';
+    document.getElementById('taskwin-title').textContent = def ? taskVersion(def, slacker ? 'slacker' : 'productive').label : 'Task';
+    document.getElementById('taskwin-sub').textContent = ui.sub[slacker ? 1 : 0];
+    document.querySelector('.taskwin').classList.toggle('is-slacker', slacker);
     this.instance = ui.mount(this.body, a.puzzle, {
       submit: (answer) => this.h.onSubmit(answer),
+      progress: (data) => this.h.onProgress?.(data),
       isTouch: document.body.classList.contains('is-touch'),
     });
     this.overlay.hidden = false;

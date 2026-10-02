@@ -7,9 +7,12 @@ export function mountRecycling(root, puzzle, { submit }) {
   let sent = false;
 
   const boxEl = el('div', { class: 'rc-box', 'aria-label': 'Box of recycling' }, el('span', { class: 'rc-box__flap' }));
-  const bin = el('div', { class: 'rc-bin', 'aria-label': 'Recycling bin' }, el('span', { class: 'rc-bin__lid' }), el('span', { class: 'rc-bin__mark' }, '\u267b'));
+  const slacker = puzzle.variant === 'slacker';
+  const bin = slacker
+    ? el('div', { class: 'rc-bin rc-ground', 'aria-label': 'The parking lot' }, el('span', { class: 'rc-ground__label' }, 'Just... here'))
+    : el('div', { class: 'rc-bin', 'aria-label': 'Recycling bin' }, el('span', { class: 'rc-bin__lid' }), el('span', { class: 'rc-bin__mark' }, '\u267b'));
   const count = el('p', { class: 'cf-count' });
-  const status = el('p', { class: 'fridge__hint' }, 'Drag each item into the blue bin.');
+  const status = el('p', { class: 'fridge__hint' }, slacker ? 'Drag everything onto the parking lot. Who\u2019s going to know?' : 'Drag each item into the blue bin.');
   root.append(el('div', { class: 'rcwrap' }, el('div', { class: 'rc-scene' }, boxEl, bin), count, status));
 
   for (const it of puzzle.items) {
@@ -38,8 +41,8 @@ export function mountRecycling(root, puzzle, { submit }) {
   }
 
   function render() {
-    count.textContent = `${binned.size} of ${puzzle.items.length} in the bin`;
-    if (binned.size === puzzle.items.length) status.textContent = 'All sorted. The planet thanks you.';
+    count.textContent = `${binned.size} of ${puzzle.items.length} ${slacker ? 'on the ground' : 'in the bin'}`;
+    if (binned.size === puzzle.items.length) status.textContent = slacker ? 'Beautiful. The planet weeps.' : 'All sorted. The planet thanks you.';
   }
   render();
   return { destroy() { root.replaceChildren(); } };

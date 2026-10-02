@@ -8,7 +8,7 @@ import { el } from './kit.js';
 const MAX_POINTS = 2500;
 const MIN_STEP = 1.2;   // board units between recorded points
 
-export function mountWhiteboard(root, puzzle, { submit }) {
+export function mountWhiteboard(root, puzzle, { submit, progress }) {
   const drawing = DRAWINGS_BY_ID.get(puzzle.drawing);
   const samples = samplePoints(drawing);
   const ink = [];          // strokes of [x, y] in board units
@@ -16,11 +16,20 @@ export function mountWhiteboard(root, puzzle, { submit }) {
   let points = 0;
   let score = { coverage: 0, accuracy: 1, ok: false, covered: [] };
   let sent = false;
+  let lastShared = 0;
+  // Everyone who can see the board watches you draw: share your strokes a few times a second.
+  const share = (force) => {
+    const now = performance.now();
+    if (!progress || (!force && now - lastShared < 250)) return;
+    lastShared = now;
+    const round = (v) => Math.round(v * 2) / 2;
+    progress({ ink: ink.map((st) => st.flatMap(([x, y]) => [round(x), round(y)])) });
+  };
 
   const canvas = el('canvas', { class: 'wb-canvas', 'aria-label': `Whiteboard: trace ${drawing.title}` });
   const bar = el('span', { class: 'wb-bar__fill' });
   const pct = el('span', { class: 'wb-bar__text' });
-  const wipe = el('button', { type: 'button', class: 'btn btn--small', onclick: () => { ink.length = 0; points = 0; rescore(); draw(); } }, 'Wipe');
+  const wipe = el('button', { type: 'button', class: 'btn btn--small', onclick: () => { ink.length = 0; points = 0; rescore(); draw(); share(true); } }, 'Wipe');
   const done = el('button', { type: 'button', class: 'btn btn--small btn--primary', onclick: () => send() }, 'Done');
   const status = el('p', { class: 'fridge__hint' });
   root.append(el('div', { class: 'wbwrap' },
@@ -70,12 +79,14 @@ export function mountWhiteboard(root, puzzle, { submit }) {
       points++;
     }
     draw();
+    share(false);
   });
   const end = () => {
     if (!current) return;
     current = null;
     rescore();
     draw();
+    share(true);
     if (score.ok) send();
   };
   canvas.addEventListener('pointerup', end);

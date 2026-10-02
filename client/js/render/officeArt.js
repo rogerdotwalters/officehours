@@ -496,6 +496,66 @@ export function drawInteractable(ctx, o) {
   (OBJECTS[o.type] || fallback)(ctx, o);
 }
 
+/** Single items, for the angled scene (scene.js). */
+export function drawDecorItem(ctx, d) {
+  (DECOR[d.kind] || fallback)(ctx, d);
+}
+export function drawObjectItem(ctx, o) {
+  (OBJECTS[o.type] || fallback)(ctx, o);
+}
+
+/** Meeting chairs, drawn flat. */
+export function drawMeetingChairs(ctx, map) {
+  for (const s of map.meetingSeats) {
+    roundRect(ctx, s.x - 13, s.y - 13, 26, 26, 7);
+    ctx.fillStyle = '#56617b'; ctx.fill();
+  }
+}
+
+/** Things on walls, drawn into the rect `r` on the wall's face. */
+export const WALL_ART = {
+  poster(ctx, d, r) {
+    const pad = 4;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(r.x, r.y + 4, r.w, r.h - 10);
+    ctx.strokeStyle = '#1d2742'; ctx.lineWidth = 2;
+    ctx.strokeRect(r.x, r.y + 4, r.w, r.h - 10);
+    ctx.fillStyle = d.color || '#e8a87c';
+    ctx.fillRect(r.x + pad, r.y + 4 + pad, r.w - pad * 2, (r.h - 10) * 0.55);
+    if (d.text === 'HANG IN THERE') {           // the classic cat poster
+      ctx.strokeStyle = '#5e3c27'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(r.x + r.w / 2, r.y + 8); ctx.lineTo(r.x + r.w / 2, r.y + 16); ctx.stroke();
+      ctx.fillStyle = '#e08a3c';
+      ctx.beginPath(); ctx.arc(r.x + r.w / 2, r.y + 22, 6, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#1d2742';
+    ctx.font = '700 7px Fredoka, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(d.text ?? '', r.x + r.w / 2, r.y + 4 + (r.h - 10) * 0.8);
+  },
+  clock(ctx, d, r) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h * 0.45, rad = Math.min(r.w, r.h) / 2 - 2;
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = '#1d2742'; ctx.stroke();
+    const t = Date.now() / 1000;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(t / 60) * rad * 0.5, cy + Math.sin(t / 60) * rad * 0.5); ctx.stroke();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = '#cf3b31';
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(t) * rad * 0.8, cy + Math.sin(t) * rad * 0.8); ctx.stroke();
+  },
+  elevator(ctx, d, r) {
+    ctx.fillStyle = '#b9c0c9';
+    ctx.fillRect(r.x, r.y - 4, r.w, r.h + 18);
+    ctx.strokeStyle = '#5d6673'; ctx.lineWidth = 3;
+    ctx.strokeRect(r.x, r.y - 4, r.w, r.h + 18);
+    ctx.fillStyle = '#8f98a5';
+    ctx.fillRect(r.x + r.w / 2 - 1, r.y - 4, 2, r.h + 18);
+    ctx.beginPath(); ctx.arc(r.x + r.w + 10, r.y + r.h / 2, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffd35c'; ctx.fill();
+  },
+};
+
 function fallback(ctx, o) {
   box(ctx, o, '#cfd4da', '#5d6673', 4);
   if (o.label) {

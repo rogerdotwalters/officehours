@@ -155,14 +155,13 @@ export class GameRoom {
       case C2S.INPUT:           return g.handleInput(player, msg.dx, msg.dy);
       case C2S.INTERACT:        return g.handleInteract(player, msg.objectId, now);
       case C2S.CANCEL:          return g.handleCancel(player);
-      case C2S.REPORT:          return g.handleReport(player, msg.targetId, now);
       case C2S.VOTE:            return g.handleVote(player, msg.targetId, now);
       case C2S.CHAT:            return g.handleChat(player, msg.text, CHAT_CHANNELS.has(msg.channel) ? msg.channel : 'all', now);
       case C2S.SETTINGS:        return g.handleSettings(player, msg.settings);
-      case C2S.DESK_CHECK:      return g.handleDeskCheck(player, now);
       case C2S.MINIGAME:        return g.handleMinigame(player, msg.answer, now);
       case C2S.HR_REPORT:       return g.handleHrReport(player, msg.targetId, now);
       case C2S.EMOTE:           return g.handleEmote(player, msg.emote);
+      case C2S.WB_INK:          return g.handleWhiteboardInk(player, msg.ink, now);
       case C2S.DEV:             return g.sandbox && handleDevCommand(g, player, msg, now); // SANDBOX
       case C2S.RETURN_TO_LOBBY: return g.handleReturnToLobby(player);
       case C2S.PING:            return this.sendTo(player.id, encode(S2C.PONG, { at: Number(msg.at) || 0 }));

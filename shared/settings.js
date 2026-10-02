@@ -13,9 +13,21 @@ export const SETTINGS_SPEC = {
     format: (v) => String(v),
     help: 'Handed out one at a time as the day goes on.',
   },
+  days: {
+    label: 'Days in the week', group: 'Workday',
+    min: 1, max: 5, step: 1, default: 3,
+    format: (v) => (v === 1 ? '1 day' : `${v} days`),
+    help: 'Slackers win if they make it to the end of the last day.',
+  },
+  target: {
+    label: 'Daily target', group: 'Workday',
+    min: 30, max: 90, step: 5, default: 60,
+    format: (v) => `${v}%`,
+    help: 'At the end of each day, if productivity minus chaos is below this, management makes you fire someone.',
+  },
   workdayMinutes: {
     label: 'Workday length', group: 'Workday',
-    min: 3, max: 15, step: 1, default: 6,
+    min: 3, max: 15, step: 1, default: 5,
     format: (v) => `${v} min`,
     help: 'Split into equal parts, one per task. The clock pauses during all-hands meetings.',
   },
@@ -23,7 +35,7 @@ export const SETTINGS_SPEC = {
     label: 'Breaks', group: 'Workday',
     min: 0, max: 3, step: 1, default: 3,
     format: (v) => ['None', 'Lunch', 'Lunch and afternoon', 'Coffee, lunch, afternoon'][v],
-    help: 'On a break nobody can be fired in the Break Room or outside, and there are no stand-ups.',
+    help: 'Some tasks (like lunch) can only be done on a break.',
   },
   playerSpeed: {
     label: 'Walking speed', group: 'Movement and sight',
@@ -36,32 +48,17 @@ export const SETTINGS_SPEC = {
     format: (v) => `${Math.round(v / 50)} m`,
     help: "You can't see anyone further away than this.",
   },
-  snitches: {
-    label: 'Snitches', group: 'Management',
-    min: 0, max: 3, step: 1, default: 1,
+  slackers: {
+    label: 'Slackers', group: 'Roles',
+    min: 1, max: 3, step: 1, default: 1,
     format: (v) => String(v),
-    help: 'Secret helpers who share a private chat with Management. At least two real workers are always kept.',
+    help: 'Secretly non-productive employees. There are always more productive employees than slackers.',
   },
-  reportRange: {
-    label: 'Report range', group: 'Management',
-    min: 100, max: 400, step: 20, default: 220,
-    format: (v) => `${Math.round(v / 50)} m`,
-  },
-  reportCooldown: {
-    label: 'Report cooldown', group: 'Management',
-    min: 10, max: 60, step: 5, default: 25,
+  shenaniganCooldown: {
+    label: 'Shenanigan cooldown', group: 'Roles',
+    min: 10, max: 90, step: 5, default: 30,
     format: (v) => `${v} s`,
-  },
-  deskCheckWarning: {
-    label: 'Stand-up warning', group: 'Management',
-    min: 8, max: 40, step: 1, default: 15,
-    format: (v) => `${v} s`,
-    help: 'Management can call a stand-up meeting: everyone has this long to get to their desk, or they\u2019re fired.',
-  },
-  deskCheckCooldown: {
-    label: 'Stand-up cooldown', group: 'Management',
-    min: 30, max: 240, step: 15, default: 90,
-    format: (v) => `${v} s`,
+    help: 'How long a slacker waits between shenanigans.',
   },
 };
 
@@ -83,7 +80,7 @@ export function sanitizeSettings(patch, base = DEFAULT_SETTINGS) {
   return out;
 }
 
-/** How many snitches a match of `playerCount` really gets (keeps 2+ real workers). */
-export function effectiveSnitches(settings, playerCount) {
-  return Math.max(0, Math.min(settings.snitches, playerCount - 3));
+/** How many slackers a match of `playerCount` really gets (always fewer than productive employees). */
+export function effectiveSlackers(settings, playerCount) {
+  return Math.max(1, Math.min(settings.slackers, Math.floor((playerCount - 1) / 2)));
 }

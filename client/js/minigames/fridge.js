@@ -13,6 +13,11 @@ import { edgesToPath } from '../../shared/minigames/pixelMask.js';
 import { el, svg, draggable, over } from './kit.js';
 
 export function mountFridge(root, puzzle, { submit, isTouch }) {
+  // Slacker version ("heist"): no lunch of your own; find the named coworker's
+  // food and drag it out of the fridge into your mouth.
+  const heist = puzzle.variant === 'slacker';
+  const target = heist ? puzzle.target : null;
+  const targetName = heist ? `${target.owner}\u2019s ${ITEMS_BY_ID.get(target.item)?.name ?? 'lunch'}` : '';
   const pieces = puzzle.pieces.map((p, i) => ({ ...p, index: i, def: ITEMS_BY_ID.get(p.item), cx: p.x == null ? null : p.x / CELL, cy: p.y == null ? null : p.y / CELL }));
   const fridge = new Fridge();
   for (const p of pieces) if (p.cx != null) fridge.put(p.def, p.cx, p.cy, p.index);
@@ -26,13 +31,13 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
     inside.append(el('div', { class: 'fz__shelf', 'data-y': s.y + s.h, 'data-h': SHELVES[i + 1].y - (s.y + s.h) }));
   }
   const box = el('div', { class: 'fz' }, el('div', { class: 'fz__light', 'aria-hidden': 'true' }), inside);
-  const tray = el('div', { class: 'fz__tray' });
+  const tray = el('div', { class: heist ? 'fz__tray fz__eat' : 'fz__tray' }, heist ? el('span', { class: 'fz__eat-label' }, 'Your mouth') : null);
   const doneBtn = el('button', { type: 'button', class: 'btn btn--primary', onclick: () => send() }, 'Close the door');
   const hint = el('p', { class: 'fridge__hint' });
   root.append(el('div', { class: 'fzwrap' },
     box,
     el('div', { class: 'fridge__side' },
-      el('p', { class: 'fridge__label' }, 'Your things'),
+      el('p', { class: 'fridge__label' }, heist ? `Target: ${targetName}` : 'Your things'),
       tray,
       el('div', { class: 'fridge__controls' }, doneBtn),
       hint)));
@@ -43,6 +48,7 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
     const label = p.yours ? d.name : `${p.owner}'s ${d.name}`;
     p.node = el('div', { class: `fitem ${p.yours ? 'is-yours' : ''}`, title: label, 'aria-label': label, 'data-key': p.key },
       el('img', { src: itemUrl(d), alt: '', draggable: 'false' }),
+      heist ? el('span', { class: 'fitem__tag' }, p.owner) : null,
       svg('svg', { class: 'fitem__outline', viewBox: `0 0 ${d.cols} ${d.rows}`, preserveAspectRatio: 'none' },
         svg('path', { d: edgesToPath(d.edges) })));
     attachDrag(p);
@@ -85,6 +91,11 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
         p.node.style.top = '';
       }
     }
+    if (heist) {
+      doneBtn.hidden = true;
+      hint.textContent = sent ? 'Delicious. Wipe your mouth.' : `Find ${targetName} and drag it out of the fridge into your mouth. You can move other food out of the way.`;
+      return;
+    }
     const left = pieces.filter((p) => p.yours && p.cx == null).length;
     doneBtn.disabled = left > 0 || sent;
     doneBtn.textContent = sent ? 'Closing\u2026' : 'Close the door';
@@ -97,7 +108,7 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
   // ---- Dragging ----
   function attachDrag(p) {
     let grab = null;      // where on the item you grabbed it, in px
-    let target = null;    // { cx, cy, ok } while over the fridge
+    let spot = null;      // { cx, cy, ok } while over the fridge
     draggable(p.node, {
       onStart(e) {
         if (sent) return false;
@@ -113,17 +124,29 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
       onMove(e) { place(e); return true; },
       onEnd(e) {
         p.node.classList.remove('is-floating', 'is-ok', 'is-bad');
+        if (p.cx == null && heist) return;
         p.node.style.position = '';
-        if (target?.ok) {
-          p.cx = target.cx;
-          p.cy = fridge.settle(p.def, target.cx, target.cy, p.index);
-        } else if (!p.yours || target) {
+        if (heist && over(tray, e.clientX, e.clientY, 20)) {
+          if (p.key === target.key && !sent) {
+            sent = true;
+            p.node.remove();
+            p.cx = null;
+            hint.textContent = 'Nom.';
+            submit({ ate: p.key });
+            setTimeout(() => { sent = false; }, 1500);
+            return;
+          }
+          hint.textContent = `That\u2019s ${p.owner}\u2019s, not the one you want.`;
+        } else if (spot?.ok) {
+          p.cx = spot.cx;
+          p.cy = fridge.settle(p.def, spot.cx, spot.cy, p.index);
+        } else if (!p.yours || spot) {
           // Coworkers' food can't leave the fridge; a bad spot snaps back.
         } else {
           p.cx = null; p.cy = null; // your food, dropped outside: back to the tray
         }
         if (p.cx != null) fridge.put(p.def, p.cx, p.cy, p.index);
-        target = null;
+        spot = null;
         layout();
       },
     });
@@ -135,16 +158,16 @@ export function mountFridge(root, puzzle, { submit, isTouch }) {
       if (over(inside, e.clientX, e.clientY, 20)) {
         const cx = Math.round((px - rect.left) / (CELL * scale));
         const cy = Math.round((py - rect.top) / (CELL * scale));
-        target = { cx, cy, ok: fridge.fits(p.def, cx, cy, p.index) };
+        spot = { cx, cy, ok: fridge.fits(p.def, cx, cy, p.index) };
         p.node.style.left = `${rect.left + cx * CELL * scale}px`;
         p.node.style.top = `${rect.top + cy * CELL * scale}px`;
       } else {
-        target = null;
+        spot = null;
         p.node.style.left = `${px}px`;
         p.node.style.top = `${py}px`;
       }
-      p.node.classList.toggle('is-ok', !!target?.ok);
-      p.node.classList.toggle('is-bad', !!target && !target.ok);
+      p.node.classList.toggle('is-ok', !!spot?.ok);
+      p.node.classList.toggle('is-bad', !!spot && !spot.ok);
     }
   }
 

@@ -24,10 +24,7 @@ export const DESK_RANGE = 58;                // within this distance of your sea
 // ---- Roles & rules --------------------------------------------------------
 // Tasks per person, workday length, speed, sight, report range/cooldown, snitch
 // count and desk checks are lobby settings: see shared/settings.js.
-export const GO_HOME_RATIO = 0.5;            // fraction of real workers who must clock out for a win
 export const START_FREEZE_MS = 4500;         // nobody moves while roles are revealed
-export const REPORT_INITIAL_COOLDOWN_MS = 15_000;
-export const DESK_CHECK_INITIAL_DELAY_MS = 45_000; // first desk check allowed this long into the day
 
 // ---- Meetings -------------------------------------------------------------
 export const MEETING_DURATION_MS = 70_000;   // discussion + voting
@@ -51,15 +48,14 @@ export const PHASE = Object.freeze({
 
 export const STATUS = Object.freeze({
   ACTIVE: 'active',        // in the office
-  HOME: 'home',            // clocked out after finishing tasks (safe)
-  SENT_HOME: 'sent_home',  // reported by Management or voted out
+  SICK: 'sick',            // drank from a spiked water cooler: home until tomorrow
+  SENT_HOME: 'sent_home',  // fired (voted out, HR, or IT found something on their computer)
   LEFT: 'left',            // disconnected for longer than the grace period
 });
 
 export const ROLE = Object.freeze({
-  WORKER: 'worker',
-  MANAGEMENT: 'management',
-  SNITCH: 'snitch',        // works like a worker, secretly on Management's side
+  PRODUCTIVE: 'productive', // the majority: does the normal version of every task
+  SLACKER: 'slacker',       // secretly non-productive: does the shenanigan version
 });
 
 // Workday clock shown in the HUD: the match maps onto 9:00 AM to 5:00 PM.

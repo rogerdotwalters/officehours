@@ -166,6 +166,7 @@ export function generateFridge(rand) {
     if (trivial && attempt < 29) continue;
 
     return {
+      variant: 'productive',
       width: FRIDGE_W, height: FRIDGE_H, cell: CELL, shelves: SHELVES,
       pieces: pieces.map((p) => ({
         key: p.key, item: p.item, yours: p.yours, owner: p.owner ?? null,
@@ -196,6 +197,26 @@ function spreadShelf(fridge, pieces, shelf) {
   }
 }
 
+/**
+ * Slacker version: the fridge is full of coworkers' food, each item with its
+ * owner's name on it. Find the one you're told to steal and drag it out to eat it.
+ */
+export function generateFridgeHeist(rand) {
+  const base = generateFridge(rand);
+  const pieces = base.pieces.filter((p) => !p.yours);
+  // Give the target an owner nobody else has, so the label is unambiguous.
+  const target = pieces[Math.floor(rand() * pieces.length)];
+  const used = new Set(pieces.filter((p) => p !== target).map((p) => p.owner));
+  const free = OWNERS.filter((o) => !used.has(o));
+  if (free.length) target.owner = free[Math.floor(rand() * free.length)];
+  return {
+    variant: 'slacker',
+    width: base.width, height: base.height, cell: base.cell, shelves: base.shelves,
+    pieces,
+    target: { key: target.key, owner: target.owner, item: target.item },
+  };
+}
+
 export function publicFridge(puzzle) {
   const { solution, ...rest } = puzzle;
   return rest;
@@ -206,6 +227,7 @@ export function publicFridge(puzzle) {
  * units on the cell grid. Every piece inside one shelf, nothing overlapping.
  */
 export function checkFridge(puzzle, answer) {
+  if (puzzle.variant === 'slacker') return answer?.ate === puzzle.target.key;
   const pos = answer?.positions;
   if (!pos || typeof pos !== 'object') return false;
   const fridge = new Fridge();
